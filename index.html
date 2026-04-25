@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Skill2Income AI</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+<style>
+body { margin:0; font-family:'Inter'; background:#020617; color:white;}
+.app { display:flex; height:100vh;}
+
+.sidebar { width:260px; background:#0f172a; padding:10px; overflow:auto;}
+.sidebar button {
+  width:100%; margin-bottom:10px; padding:10px;
+  background:#1e293b; border:none; border-radius:8px; color:white;
+}
+
+.chat-item {position: relative; padding: 10px; background: #111827;
+  margin-bottom: 8px; border-radius: 6px;  display: flex;
+  justify-content: space-between;  align-items: center;
+}
+
+.chat-menu { position:absolute; right:5px; top:28px;  background:#1f2937;
+  border-radius:6px; display:none; z-index:9999;
+}
+.chat-menu div {padding: 8px 12px;  cursor: pointer;
+}
+.chat-menu div:hover { background: #374151;
+}
+
+.chat-container { flex:1; display:flex; flex-direction:column;}
+.top-bar { padding:12px; border-bottom:1px solid #1e293b;}
+.chat-box { flex:1; padding:20px; overflow:auto;}
+
+.chat-item span:first-child { flex: 1;  cursor: pointer;
+}
+.message { margin-bottom:15px; padding:12px; border-radius:10px;  max-width:70%;
+}
+.user { background:#2563eb; margin-left:auto;}
+.ai { background:#111827;}
+
+.suggestions { padding:10px; border-top:1px solid #1e293b;}
+.suggestions button {  margin:5px; padding:8px 12px; border-radius:20px;
+  background:#1f2937; border:none; color:white;
+}
+
+.input-box { display:flex; padding:10px;}
+input { flex:1; padding:10px; border-radius:8px; border:none;}
+button.send {  margin-left:10px; background:#22c55e;
+  padding:10px; border-radius:8px; color:white;
+}
+
+a { color:#60a5fa; text-decoration:underline; }
+</style>
+
+</head>
+
+<body>
+
+<div class="app">
+
+<div class="sidebar" id="sidebar"></div>
+
+<div class="chat-container">
+<div class="top-bar">🚀 Skill2Income AI</div>
+
+<div id="chat" class="chat-box"></div>
+
+<div class="suggestions">
+<button onclick="quickFill('I know Python freelance 2 hours')">💻 Python Freelance</button>
+<button onclick="quickFill('student income online')">🎓 Student Income</button>
+<button onclick="quickFill('passive income ideas')">💰 Passive Income</button>
+</div>
+
+<div class="input-box">
+<input id="userInput" placeholder="Type your idea...">
+<button class="send" onclick="sendMessage()">Send</button>
+</div>
+
+</div>
+</div>
+
+<script>
+const firebaseConfig = {
+  apiKey:"AIzaSyBUdYVcFTTm2DlmKZJG9_t6Vdu2_P3MuIg",
+  authDomain:"skill2income-adef1.firebaseapp.com",
+  projectId:"skill2income-adef1"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+const chat = document.getElementById("chat");
+const sidebar = document.getElementById("sidebar");
+const userInput = document.getElementById("userInput");
+
+let currentChatId=null;
+let messages=[];
+
+// ENTER
+userInput.addEventListener("keypress", e=>{
+ if(e.key==="Enter") sendMessage();
+});
+
+// LOGIN
+function login(){
+  const provider = new firebase.auth.GoogleAuthProvider();
+  auth.signInWithPopup(provider)
+    .then(res => console.log("Logged in:", res.user.email))
+    .catch(err => console.error("Login error:", err));
+}
+
+// AUTH
+auth.onAuthStateChanged(user=>{
+ if(user) loadChatList();
+ else sidebar.innerHTML=`<button onclick="login()">🔐 Login</button>`;
+});
+
+// SMART LINKS
+function getSmartLinks(title){
+ const t=title.toLowerCase();
+
+ if(t.includes("freelance")){
+  return `👉 <a href="https://www.fiverr.com" target="_blank">Fiverr</a><br>
+          👉 <a href="https://www.upwork.com" target="_blank">Upwork</a>`;
+ }
+
+ if(t.includes("student")){
+  return `👉 <a href="https://www.chegg.com" target="_blank">Chegg</a><br>
+          👉 <a href="https://www.studypool.com" target="_blank">Studypool</a>`;
+ }
+
+ if(t.includes("passive")){
+  return `👉 <a href="https://gumroad.com" target="_blank">Gumroad</a><br>
+          👉 <a href="https://shopify.com" target="_blank">Shopify</a>`;
+ }
+
+ return `👉 <a href="https://www.google.com" target="_blank">Explore More</a>`;
+}
+
+// SIDEBAR
+function loadChatList(){
+ const user=auth.currentUser;
+
+ db.collection("users").doc(user.uid)
+ .collection("chats").orderBy("createdAt","desc")
+ .get().then(snapshot=>{
+
+  sidebar.innerHTML=`
+    <button onclick="newChat()">➕ New Chat</button>
+    <button onclick="goDashboard()">📊 Saved Plans</button>
+    <button onclick="login()">🔐 Login</button>
+    <p style="font-size:12px;color:#94a3b8;">${auth.currentUser.email}</p>
+    <button onclick="logout()">🚪 Logout</button>
+    <button onclick="showUpgrade()">💎 Upgrade</button>
+
+    <hr>
+  `;
+
+  snapshot.forEach(doc=>{
+    const container=document.createElement("div");
+    container.className="chat-item";
+
+    const title=document.createElement("span");
+    title.innerText=doc.data().title;
+    title.onclick=(e)=>{e.stopPropagation();
+  loadChat(doc.id);
+};
+
+    const btn = document.createElement("span");
+btn.innerText = "⋮";
+btn.style.cursor = "pointer";
+
+const menu = document.createElement("div");
+menu.className = "chat-menu";
+
+const rename = document.createElement("div");
+rename.innerText = "Rename";
+rename.onclick = () => {
+  const newName = prompt("Enter new name:");
+  if(newName) renameChat(doc.id, newName);
+  menu.style.display = "none";
+};
+
+    const del = document.createElement("div");
+del.innerText = "Delete";
+del.onclick = () => {
+  deleteChat(doc.id);
+  menu.style.display = "none";
+};
+
+menu.appendChild(rename);
+menu.appendChild(del);
+
+btn.onclick = (e) => {
+  e.stopPropagation();
+
+  document.querySelectorAll(".chat-menu").forEach(m => {
+    m.style.display = "none";
+  });
+
+  menu.style.display = "block";
+};
+
+    container.appendChild(title);
+    container.appendChild(btn);
+    container.appendChild(menu);
+
+    sidebar.appendChild(container);
+  });
+ });
+}
+
+// MESSAGE
+function addMessage(text,type){
+  const div=document.createElement("div");
+  div.className="message "+type;
+  div.innerHTML=text;
+
+  const id = Date.now();
+  div.setAttribute("data-id", id);
+
+  chat.appendChild(div);
+  chat.scrollTop=chat.scrollHeight;
+
+  return id; // 🔥 IMPORTANT
+}
+
+// QUICK FILL
+function quickFill(text){
+ userInput.value=text;
+}
+
+// NEW CHAT
+async function newChat(){
+ const doc=await db.collection("users").doc(auth.currentUser.uid)
+ .collection("chats").add({
+   title:"New Chat",
+   messages:[],
+   createdAt:new Date()
+ });
+
+ currentChatId=doc.id;
+ messages=[];
+ chat.innerHTML="";
+ loadChatList();
+}
+
+// SEND MESSAGE (🔥 PREMIUM UI)
+async function sendMessage(){
+
+  if(!auth.currentUser) return alert("Login first");
+
+  const sendBtn = document.querySelector(".send");
+  sendBtn.disabled = true;
+
+  const text = userInput.value.trim();
+  if(!text){
+    sendBtn.disabled = false;
+    return;
+  }
+
+  if(!currentChatId) await newChat();
+
+  addMessage(text,"user");
+  messages.push({role:"user",text});
+  userInput.value="";
+
+  const loadingId = addMessage("⏳ Thinking... generating your plan","ai");
+
+  try{
+    const res = await fetch("https://skill2income-api.onrender.com/generate-income-plan",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        skills:text,
+        interests:text,
+        time:"2 hours",
+        history:messages.slice(-5)
+      })
+    });
+
+    if(!res.ok){
+      removeMessage(loadingId);
+      addMessage("❌ Server error. Try again.","ai");
+      sendBtn.disabled = false;
+      return;
+    }
+
+    const data = await res.json();
+
+    if(!data.result || !Array.isArray(data.result)){
+      removeMessage(loadingId);
+      addMessage("⚠️ Invalid response. Try again.","ai");
+      sendBtn.disabled = false;
+      return;
+    }
+
+    removeMessage(loadingId);
+
+    window.currentPlans = data.result;
+
+data.result.forEach((p, i)=>{
+
+  const steps = p.steps ? p.steps.map(s => "• " + s).join("<br>") : "";
+  const tools = p.tools_needed ? p.tools_needed.join(", ") : "";
+
+  const html=`
+<div style="border:1px solid #1f2937; padding:15px; border-radius:12px; margin-bottom:15px; background:#020617">
+
+  <h3 style="color:#22c55e;">🚀 ${p.title}</h3>
+
+  <p><b>👤 Who it's for:</b><br>
+  ${
+    p.who_is_this_for && p.who_is_this_for !== "General audience"
+      ? p.who_is_this_for
+      : ["Beginners","Students","Professionals"][i % 3]
+  }
+  </p>
+
+  <p><b>💡 Why it works:</b><br>
+  ${p.why_it_works || "Growing demand"}
+  </p>
+
+  <p><b>🛠 Tools:</b><br>${tools || "Fiverr, Upwork"}</p>
+
+  <p><b>📋 Description:</b><br>${p.description}</p>
+
+  <p><b>🪜 Steps:</b><br>${steps}</p>
+
+  <p><b>⏳ Time:</b> ${p.time_to_start || "1–3 days"}</p>
+
+  <p><b>💰 Earnings:</b> ${p.earnings} | ${p.monthly_estimate}</p>
+
+  <p><b>⚡ Difficulty:</b> ${p.difficulty}</p>
+
+  <div style="background:#111827;padding:10px;border-radius:8px;">
+    <b>🔥 Pro Tip:</b><br>
+    ${p.pro_tip || "Start small and validate quickly"}
+  </div>
+
+  <p><b>🔗 Start Here:</b><br>${getSmartLinks(p.title)}</p>
+
+  <button onclick='reusePlan(${i})'>🔁 Reuse</button>
+  <button onclick='savePlan(${i})'>💾 Save</button>
+  <button onclick='copyPlan(${i})'>📋 Copy</button>
+  <button onclick="exportPDF(this)">📄 PDF</button>
+
+</div>
+`;
+
+  addMessage(html,"ai");
+  messages.push({role:"ai",text:html});
+
+      
+    });
+
+    saveChat();
+    sendBtn.disabled = false;
+
+  } catch(err){
+    console.error(err);
+    removeMessage(loadingId);
+    addMessage("❌ Something went wrong. Try again.","ai");
+    sendBtn.disabled = false;
+  }
+}
+
+
+
+
+// LOAD CHAT
+function loadChat(id){
+  db.collection("users").doc(auth.currentUser.uid)
+  .collection("chats").doc(id).get().then(doc=>{
+    if(!doc.exists) return;
+
+    currentChatId = id;
+
+    messages = doc.data().messages || [];
+
+    // 🔥 IMPORTANT FIX
+    chat.innerHTML = "";
+
+    messages.forEach(m => {
+      addMessage(m.text, m.role);
+    });
+
+    // scroll fix
+    chat.scrollTop = chat.scrollHeight;
+  });
+}
+
+// DELETE
+function deleteChat(id){
+ db.collection("users").doc(auth.currentUser.uid)
+ .collection("chats").doc(id).delete().then(loadChatList);
+}
+
+// SAVE
+function savePlan(index){
+  const plan = window.currentPlans[index];
+  db.collection("users").doc(auth.currentUser.uid)
+    .collection("plans").add({ ...plan,
+      createdAt: new Date()
+    })
+    .then(()=>{
+      alert("✅ Plan saved successfully!");
+    })
+    .catch(err=>{
+      console.error(err);
+      alert("❌ Failed to save plan");
+    });
+}
+
+// RENAME
+function renameChat(id,name){
+ db.collection("users").doc(auth.currentUser.uid)
+ .collection("chats").doc(id).update({title:name}).then(loadChatList);
+}
+// SAVE CHAT
+
+function saveChat(){
+  if(!currentChatId) return;
+  db.collection("users").doc(auth.currentUser.uid)
+  .collection("chats").doc(currentChatId)
+  .set({ messages: messages,updatedAt: new Date()
+  }, { merge: true });
+}
+// NAV
+function goDashboard(){
+ window.location.href="dashboard.html";
+}
+
+// INIT
+function copyPlan(index){
+  const plan = window.currentPlans[index];
+
+  const text = `
+${plan.title}
+
+Who: ${plan.who_is_this_for}
+Why: ${plan.why_it_works}
+
+Steps:
+${plan.steps ? plan.steps.join("\n") : ""}
+
+Earnings: ${plan.earnings}
+Monthly: ${plan.monthly_estimate}
+`;
+
+  navigator.clipboard.writeText(text);
+  alert("Copied!");
+}
+function exportPDF(btn){
+  const card = btn.closest("div");
+  html2pdf().from(card).save("plan.pdf");
+}
+window.onload = () => {
+  const text = localStorage.getItem("reuseText");
+  if(text){
+    document.getElementById("userInput").value = text;
+    localStorage.removeItem("reuseText");
+  }
+
+  addMessage("💡 Example: I know Python, want freelancing","ai");
+};
+function logout(){
+  auth.signOut().then(()=>{alert("Logged out");
+    location.reload();
+  });
+}
+function showUpgrade(){
+  alert("💎 Premium coming soon!\n\n✔ Unlimited plans\n✔ Advanced AI\n✔ Export features");
+}
+function reusePlan(index){
+  if(!window.currentPlans){
+    alert("⚠️ No plan available yet");
+    return;
+  }
+
+  const plan = window.currentPlans[index];
+
+  const text = `
+${plan.title}
+${plan.description}
+${plan.steps ? plan.steps.join(" ") : ""}
+`;
+
+  document.getElementById("userInput").value = text;
+  document.getElementById("userInput").focus();
+}
+function removeMessage(id){
+  const el = document.querySelector(`[data-id='${id}']`);
+  if(el) el.remove();
+}
+
+</script>
+
+</body>
+</html>

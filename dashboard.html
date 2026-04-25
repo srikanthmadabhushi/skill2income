@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Saved Plans Dashboard</title>
+
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+<style>
+body { font-family:'Inter'; background:#020617; color:white; margin:0; }
+
+.header {
+  padding:15px;
+  background:#0f172a;
+  display:flex;
+  justify-content:space-between;
+}
+
+.container {
+  padding:20px;
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap:15px;
+}
+
+.card {
+  background:#111827;
+  padding:15px;
+  border-radius:10px;
+  border:1px solid #1f2937;
+}
+
+button {
+  margin:5px;
+  padding:6px 10px;
+  border:none;
+  border-radius:6px;
+  cursor:pointer;
+}
+
+.delete { background:#ef4444; color:white;}
+.reuse { background:#22c55e;}
+.pdf { background:#3b82f6;}
+</style>
+
+</head>
+
+<body>
+
+<div class="header">
+  <h2>📊 Saved Plans</h2>
+  <button onclick="goBack()">⬅ Back</button>
+</div>
+
+<div id="plans" class="container"></div>
+
+<script>
+const firebaseConfig = {
+  apiKey:"AIzaSyBUdYVcFTTm2DlmKZJG9_t6Vdu2_P3MuIg",
+  authDomain:"skill2income-adef1.firebaseapp.com",
+  projectId:"skill2income-adef1"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+
+auth.onAuthStateChanged(user=>{
+  if(user){
+    loadPlans();
+  } else {
+    alert("Login required");
+  }
+});
+
+function loadPlans(){
+  db.collection("users").doc(auth.currentUser.uid)
+  .collection("plans")
+  .orderBy("createdAt","desc")
+  .get()
+  .then(snapshot=>{
+    const container = document.getElementById("plans");
+    container.innerHTML = "";
+
+    snapshot.forEach(doc=>{
+      const p = doc.data();
+      const id = doc.id;
+
+      const steps = p.steps ? p.steps.map(s=>"• "+s).join("<br>") : "";
+      const tools = p.tools_needed ? p.tools_needed.join(", ") : "";
+
+      const card = document.createElement("div");
+      card.className = "card";
+
+      card.innerHTML = `
+        <h3>🚀 ${p.title}</h3>
+
+        <p><b>👤 Who:</b><br>${p.who_is_this_for}</p>
+        <p><b>💡 Why:</b><br>${p.why_it_works}</p>
+        <p><b>🛠 Tools:</b><br>${tools}</p>
+        <p>${p.description}</p>
+        <p>${steps}</p>
+
+        <p><b>💰 ${p.earnings}</b></p>
+
+        <button class="reuse" onclick='reusePlan("${p.title}")'>Reuse</button>
+        <button class="pdf" onclick="exportPDF(this)">PDF</button>
+        <button class="delete" onclick="deletePlan('${id}')">Delete</button>
+      `;
+
+      container.appendChild(card);
+    });
+  });
+}
+
+function deletePlan(id){
+  db.collection("users").doc(auth.currentUser.uid)
+  .collection("plans").doc(id)
+  .delete()
+  .then(()=>{
+    alert("Deleted");
+    loadPlans();
+  });
+}
+
+function exportPDF(btn){
+  const card = btn.closest(".card");
+  html2pdf().from(card).save("plan.pdf");
+}
+
+function reusePlan(title){
+  localStorage.setItem("reuseText", title);
+  window.location.href = "index.html";
+}
+
+function goBack(){
+  window.location.href = "index.html";
+}
+</script>
+
+</body>
+</html>
