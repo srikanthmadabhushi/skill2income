@@ -299,7 +299,24 @@ a { color:#60a5fa; text-decoration:underline; }
     <h3>My Tickets</h3>
     <div id="myTicketsBody" style="display:flex; flex-direction:column; gap:10px;"></div>
     <div class="modal-actions">
+      <button class="project-tab" onclick="openIssueModalFromTickets()">Raise New Issue</button>
+      <button class="project-tab" onclick="openTicketStatusFromTickets()">Check Ticket Status</button>
       <button class="project-tab" onclick="closeMyTicketsModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="loginModal" class="modal-backdrop">
+  <div class="modal-card">
+    <h3>Sign In</h3>
+    <p style="color:#cbd5e1; margin-bottom:14px;">Choose a sign-in method. No separate password or registration form is needed.</p>
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      <button class="project-tab" onclick="loginWithGoogle()">Continue with Google</button>
+      <button class="project-tab" onclick="loginWithMicrosoft()">Continue with Microsoft</button>
+      <button class="project-tab" onclick="loginWithGitHub()">Continue with GitHub</button>
+    </div>
+    <div class="modal-actions" style="margin-top:14px;">
+      <button class="project-tab" onclick="closeLoginModal()">Close</button>
     </div>
   </div>
 </div>
@@ -324,6 +341,7 @@ const issueModal = document.getElementById("issueModal");
 const ticketStatusModal = document.getElementById("ticketStatusModal");
 const myTicketsModal = document.getElementById("myTicketsModal");
 const myTicketsBody = document.getElementById("myTicketsBody");
+const loginModal = document.getElementById("loginModal");
 
 let currentChatId=null;
 let messages=[];
@@ -360,6 +378,14 @@ function closeAllChatMenus(){
   document.querySelectorAll(".chat-menu").forEach(menu => {
     menu.style.display = "none";
   });
+}
+
+function closeLoginModal(){
+  loginModal.style.display = "none";
+}
+
+function openLoginModal(){
+  loginModal.style.display = "flex";
 }
 
 function isMobileView(){
@@ -404,10 +430,33 @@ window.addEventListener("resize", () => {
 
 // LOGIN
 function login(){
-  const provider = new firebase.auth.GoogleAuthProvider();
+  openLoginModal();
+}
+
+function loginWithProvider(provider){
+  closeLoginModal();
   auth.signInWithPopup(provider)
     .then(res => console.log("Logged in:", res.user.email))
-    .catch(err => console.error("Login error:", err));
+    .catch(err => {
+      console.error("Login error:", err);
+      alert(`Login failed: ${err.message || err}`);
+    });
+}
+
+function loginWithGoogle(){
+  const provider = new firebase.auth.GoogleAuthProvider();
+  loginWithProvider(provider);
+}
+
+function loginWithMicrosoft(){
+  const provider = new firebase.auth.OAuthProvider("microsoft.com");
+  provider.setCustomParameters({ prompt: "select_account" });
+  loginWithProvider(provider);
+}
+
+function loginWithGitHub(){
+  const provider = new firebase.auth.GithubAuthProvider();
+  loginWithProvider(provider);
 }
 
 // AUTH
@@ -461,7 +510,6 @@ function loadChatList(){
   sidebar.innerHTML = `
   <button onclick="newChat()">➕ New Chat</button>
   <button onclick="goDashboard()">📊 Saved Plans</button>
-  <button onclick="openIssueModal()">🛠 Report Issue</button>
   <button onclick="openTicketStatusModal()">🎫 Check Ticket Status</button>
   <button onclick="openMyTicketsModal()">🧾 My Tickets (${supportTickets.length})</button>
   <button onclick="runIdeaComparison()">⚖️ Compare Selected Ideas (${compareIdeas.length})</button>
@@ -593,6 +641,16 @@ function closeMyTicketsModal(){
   myTicketsModal.style.display = "none";
 }
 
+function openIssueModalFromTickets(){
+  closeMyTicketsModal();
+  openIssueModal();
+}
+
+function openTicketStatusFromTickets(){
+  closeMyTicketsModal();
+  openTicketStatusModal();
+}
+
 function openMyTicketsModal(){
   closeMobileSidebar();
   renderMyTicketsModal();
@@ -607,7 +665,13 @@ function renderMyTicketsModal(){
   });
 
   if(!items.length){
-    myTicketsBody.innerHTML = `<div class="project-empty">No tickets yet. Raise an issue or push a project to ServiceNow and it will appear here.</div>`;
+    myTicketsBody.innerHTML = `
+      <div class="project-empty">No tickets yet. Raise an issue or push a project to ServiceNow and it will appear here.</div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;">
+        <button class="project-tab" onclick="openIssueModalFromTickets()">Raise New Issue</button>
+        <button class="project-tab" onclick="openTicketStatusFromTickets()">Check Ticket Status</button>
+      </div>
+    `;
     return;
   }
 
@@ -620,7 +684,7 @@ function renderMyTicketsModal(){
           <div style="color:#94a3b8; font-size:12px; margin-top:6px;">Status: ${escapeHtml(ticket.status || "Submitted")} | Source: ${escapeHtml(ticket.source || "support")}</div>
           <div style="color:#94a3b8; font-size:12px;">Updated: ${escapeHtml(formatDisplayDate(ticket.lastCheckedAt || ticket.updated_at || ticket.createdAt || ticket.created_at))}</div>
         </div>
-        <button class="project-tab" onclick="checkStoredTicketStatus('${escapeHtml(ticket.number || "")}')">Refresh Status</button>
+        <button class="project-tab" onclick="checkStoredTicketStatus('${escapeHtml(ticket.number || "")}')">View Status</button>
       </div>
     </div>
   `).join("");
@@ -866,7 +930,7 @@ function renderActiveProjectPanel(){
         <button class="project-tab" onclick="runValidationToolkit()">Run Validation Toolkit</button>
         <button class="project-tab" onclick="runLaunchAgent()">Run Launch Agent</button>
         <button class="project-tab" onclick="runFirstCustomerPack()">Run First Customer Pack</button>
-        <button class="project-tab" onclick="pushToServiceNow()">Push to ServiceNow</button>
+        <button class="project-tab" onclick="pushToServiceNow()">Create ServiceNow Project Ticket</button>
         <button class="project-tab" onclick="exportActiveProjectPdf()">Export Project to PDF</button>
         <button class="project-tab" onclick="reuseActiveProjectInChat()">Reuse in Chat</button>
         <button class="project-tab" onclick="clearActiveProject()">Clear Project</button>
