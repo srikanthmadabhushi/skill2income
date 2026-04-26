@@ -362,6 +362,39 @@ a { color:#60a5fa; text-decoration:underline; }
   </div>
 </div>
 
+<div id="knowledgeBaseModal" class="modal-backdrop">
+  <div class="modal-card">
+    <h3>Knowledge Base</h3>
+    <p style="color:#cbd5e1; margin:0 0 12px 0;">Save notes, assumptions, customer feedback, playbooks, or internal process details so the AI can answer using your own context.</p>
+    <label class="modal-label" for="knowledgeTitle">Note Title</label>
+    <input id="knowledgeTitle" placeholder="Example: Clinic onboarding pain points">
+    <label class="modal-label" for="knowledgeSource">Source / Tag</label>
+    <input id="knowledgeSource" placeholder="Example: Customer interview, ServiceNow, Internal notes">
+    <label class="modal-label" for="knowledgeContent">Knowledge Note</label>
+    <textarea id="knowledgeContent" rows="6" placeholder="Paste customer pain points, process notes, delivery constraints, competitor observations, or any context you want the advisor to use."></textarea>
+    <div class="modal-actions" style="margin-bottom:12px;">
+      <button class="project-tab" onclick="saveKnowledgeNote()">Save Note</button>
+    </div>
+    <div id="knowledgeBaseBody" style="display:flex; flex-direction:column; gap:10px; max-height:250px; overflow:auto;"></div>
+    <div class="modal-actions" style="margin-top:14px;">
+      <button class="project-tab" onclick="closeKnowledgeBaseModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="ragAdvisorModal" class="modal-backdrop">
+  <div class="modal-card">
+    <h3>Knowledge Advisor</h3>
+    <p style="color:#cbd5e1; margin:0 0 12px 0;">Ask a focused project question. The advisor will answer using the notes saved in your Knowledge Base.</p>
+    <label class="modal-label" for="ragAdvisorQuestion">Question</label>
+    <textarea id="ragAdvisorQuestion" rows="4" placeholder="Example: What should I do next to validate this project based on my saved notes?"></textarea>
+    <div class="modal-actions">
+      <button class="project-tab" onclick="closeRagAdvisorModal()">Cancel</button>
+      <button class="project-tab" onclick="submitRagAdvisor()">Run Knowledge Advisor</button>
+    </div>
+  </div>
+</div>
+
 <div id="loginModal" class="modal-backdrop">
   <div class="modal-card">
     <h3>Sign In</h3>
@@ -400,6 +433,9 @@ const myTicketsModal = document.getElementById("myTicketsModal");
 const myTicketsBody = document.getElementById("myTicketsBody");
 const projectsModal = document.getElementById("projectsModal");
 const projectsBody = document.getElementById("projectsBody");
+const knowledgeBaseModal = document.getElementById("knowledgeBaseModal");
+const knowledgeBaseBody = document.getElementById("knowledgeBaseBody");
+const ragAdvisorModal = document.getElementById("ragAdvisorModal");
 const loginModal = document.getElementById("loginModal");
 const loginStatusMessage = document.getElementById("loginStatusMessage");
 const topBarActions = document.getElementById("topBarActions");
@@ -413,6 +449,7 @@ let activeProjectTab="overview";
 let activeProjectCollapsed=false;
 let supportTickets=[];
 let savedProjects=[];
+let knowledgeItems=[];
 let compareIdeas=[];
 let loginInProgress=false;
 let ideaGenerationCount = 0;
@@ -425,7 +462,9 @@ const FREE_LIMITS = {
   launch_agent: 1,
   first_customer_pack: 1,
   idea_comparison: 1,
-  pdf_export: 1
+  pdf_export: 1,
+  strategy_agent: 1,
+  rag_advisor: 1
 };
 const ACTION_LABELS = {
   idea_generations: "idea generations",
@@ -433,7 +472,9 @@ const ACTION_LABELS = {
   launch_agent: "Launch Agent runs",
   first_customer_pack: "First Customer Pack runs",
   idea_comparison: "idea comparisons",
-  pdf_export: "PDF exports"
+  pdf_export: "PDF exports",
+  strategy_agent: "Project Strategy Agent runs",
+  rag_advisor: "Knowledge Advisor runs"
 };
 
 function getHistoryText(message){
@@ -783,10 +824,12 @@ auth.onAuthStateChanged(user => {
     loadProjects();
     loadActiveProject();
     loadSupportTickets();
+    loadKnowledgeBase();
   } else {
     activeProject = null;
     supportTickets = [];
     savedProjects = [];
+    knowledgeItems = [];
     compareIdeas = [];
     messages = [];
     currentPlans = [];
@@ -832,6 +875,7 @@ function loadChatList(){
   sidebar.innerHTML = `
   <button onclick="newChat()">➕ New Chat</button>
   <button onclick="openProjectsModal()">📁 My Projects (${savedProjects.length})</button>
+  <button onclick="openKnowledgeBaseModal()">🧠 Knowledge Base (${knowledgeItems.length})</button>
   <button onclick="goDashboard()">📊 Saved Plans</button>
   <button onclick="openTicketStatusModal()">🎫 Check Ticket Status</button>
   <button onclick="openMyTicketsModal()">🧾 My Tickets (${supportTickets.length})</button>
@@ -1053,6 +1097,122 @@ function loadSupportTickets(){
     });
 }
 
+function closeKnowledgeBaseModal(){
+  knowledgeBaseModal.style.display = "none";
+}
+
+function openKnowledgeBaseModal(){
+  closeMobileSidebar();
+  renderKnowledgeBaseModal();
+  knowledgeBaseModal.style.display = "flex";
+}
+
+function renderKnowledgeBaseModal(){
+  const items = [...knowledgeItems].sort((a, b) => {
+    const aTime = new Date(a.updatedAt || a.createdAt || 0).getTime();
+    const bTime = new Date(b.updatedAt || b.createdAt || 0).getTime();
+    return bTime - aTime;
+  });
+
+  knowledgeBaseBody.innerHTML = items.length ? items.map(item => `
+    <div style="background:#0f172a; border:1px solid #334155; border-radius:12px; padding:12px;">
+      <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
+        <div>
+          <div style="font-weight:700; color:#f8fafc;">${escapeHtml(item.title || "Untitled note")}</div>
+          <div style="font-size:12px; color:#94a3b8; margin-top:4px;">${escapeHtml(item.source || "No source")} • ${escapeHtml(formatDisplayDate(item.updatedAt || item.createdAt))}</div>
+        </div>
+        <button class="project-tab" onclick="deleteKnowledgeNote('${escapeHtml(item.id || "")}')" style="padding:6px 10px;">Delete</button>
+      </div>
+      <div style="margin-top:8px; color:#cbd5e1; white-space:pre-wrap;">${escapeHtml(item.content || "")}</div>
+    </div>
+  `).join("") : `<div class="project-empty">No knowledge notes yet. Add customer notes, delivery constraints, process details, or lessons learned so the advisor can use your own context.</div>`;
+}
+
+function loadKnowledgeBase(){
+  if(!auth.currentUser) return;
+  db.collection("users").doc(auth.currentUser.uid)
+    .collection("knowledge_base")
+    .orderBy("updatedAt", "desc")
+    .get()
+    .then(snapshot => {
+      knowledgeItems = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      renderKnowledgeBaseModal();
+      loadChatList();
+    })
+    .catch(err => {
+      console.error("knowledge base load error", err);
+    });
+}
+
+function saveKnowledgeNote(){
+  if(!auth.currentUser) return;
+  const title = document.getElementById("knowledgeTitle").value.trim();
+  const source = document.getElementById("knowledgeSource").value.trim();
+  const content = document.getElementById("knowledgeContent").value.trim();
+
+  if(!title || !content){
+    alert("Please add both a note title and note content.");
+    return;
+  }
+
+  const payload = {
+    title,
+    source,
+    content,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  db.collection("users").doc(auth.currentUser.uid)
+    .collection("knowledge_base")
+    .add(payload)
+    .then(() => {
+      document.getElementById("knowledgeTitle").value = "";
+      document.getElementById("knowledgeSource").value = "";
+      document.getElementById("knowledgeContent").value = "";
+      loadKnowledgeBase();
+      trackEvent("knowledge_note_saved", { title, source });
+    })
+    .catch(err => {
+      console.error("knowledge base save error", err);
+      alert(`Could not save knowledge note: ${err.message || err}`);
+    });
+}
+
+function deleteKnowledgeNote(noteId){
+  if(!auth.currentUser || !noteId) return;
+  if(!confirm("Delete this knowledge note?")) return;
+
+  db.collection("users").doc(auth.currentUser.uid)
+    .collection("knowledge_base").doc(noteId)
+    .delete()
+    .then(() => {
+      knowledgeItems = knowledgeItems.filter(item => item.id !== noteId);
+      renderKnowledgeBaseModal();
+      loadChatList();
+      trackEvent("knowledge_note_deleted", { note_id: noteId });
+    })
+    .catch(err => {
+      console.error("knowledge note delete error", err);
+      alert(`Could not delete knowledge note: ${err.message || err}`);
+    });
+}
+
+function closeRagAdvisorModal(){
+  ragAdvisorModal.style.display = "none";
+}
+
+function openRagAdvisorModal(){
+  if(!activeProject) return;
+  if(!knowledgeItems.length){
+    addMessage("⚠️ Add at least one note in the Knowledge Base before running the Knowledge Advisor.", "ai");
+    openKnowledgeBaseModal();
+    return;
+  }
+  document.getElementById("ragAdvisorQuestion").value = `What should I do next to move ${activeProject.title || "this project"} forward based on my saved notes?`;
+  ragAdvisorModal.style.display = "flex";
+}
+
 function closeProjectsModal(){
   projectsModal.style.display = "none";
 }
@@ -1243,7 +1403,7 @@ function renderProjectTimeline(project){
             <div style="color:#94a3b8; font-size:12px; margin-top:4px;">${escapeHtml(formatDisplayDate(item.createdAt))}</div>
             ${item.details?.summary ? `<div style="margin-top:6px; color:#e5e7eb;">${escapeHtml(item.details.summary)}</div>` : ""}
           </div>
-        `).join("") : `<div class="project-empty">No timeline activity yet. Run the toolkit, launch agent, or support flow to populate it.</div>`}
+        `).join("") : `<div class="project-empty">No timeline activity yet. Run the Knowledge Advisor, toolkit, launch agent, or support flow to populate it.</div>`}
       </div>
       <div>
         <p><b>Related tickets</b></p>
@@ -1293,14 +1453,18 @@ function renderUpgradePrompt(context){
     validation: "Unlock deeper validation workflows",
     launch: "Turn more ideas into launch-ready assets",
     export: "Export unlimited polished project reports",
-    customer_pack: "Generate more first-customer packs faster"
+    customer_pack: "Generate more first-customer packs faster",
+    strategy: "Unlock unlimited strategy runs",
+    knowledge: "Use your own knowledge notes more often"
   };
 
   const detailMap = {
     validation: "Pro is the right next step if you want unlimited validation runs, richer exports, and deeper coaching on the same project.",
     launch: "Pro helps serious users keep refining, exporting, and comparing multiple projects without stopping at one flow.",
     export: "Pro is ideal for users who want reusable project exports, advanced packs, and unlimited workspace actions.",
-    customer_pack: "Pro makes this workflow stronger with unlimited packs, launch cycles, and execution support."
+    customer_pack: "Pro makes this workflow stronger with unlimited packs, launch cycles, and execution support.",
+    strategy: "Pro is ideal if you want to keep running structured AI strategy diagnostics, action queues, and project agents across multiple ideas.",
+    knowledge: "Pro is ideal if you want unlimited retrieval-grounded answers using your own saved notes, customer research, and internal playbooks."
   };
 
   return `
@@ -1335,6 +1499,7 @@ function trackEvent(eventName, metadata = {}){
 function getProjectChecklist(){
   return [
     { key: "idea_selected", label: "Idea selected" },
+    { key: "knowledge_advisor_completed", label: "Knowledge advisor completed" },
     { key: "validation_completed", label: "Validation toolkit completed" },
     { key: "execution_plan_opened", label: "Execution plan opened" },
     { key: "first_customer_pack_ready", label: "First customer pack generated" },
@@ -1425,9 +1590,13 @@ function renderActiveProjectPanel(){
       <p><b>Why it works:</b><br>${escapeHtml(activeProject.why_it_works || activeProject.description || "")}</p>
       <p><b>Who it serves:</b><br>${escapeHtml(activeProject.who_is_this_for || "A focused target customer")}</p>
       <p><b>Current goal:</b><br>${escapeHtml(activeProject.current_goal || "Validate the smallest version and get the first customer conversation.")}</p>
+      ${activeProject.rag_advisor ? `<p><b>Knowledge summary:</b><br>${escapeHtml(activeProject.rag_advisor.retrieval_summary || "")}</p>` : ""}
+      ${activeProject.rag_advisor ? `<p><b>Knowledge-guided answer:</b><br>${escapeHtml(activeProject.rag_advisor.answer || "")}</p>` : ""}
       ${validationScore ? `<p><b>Validation score:</b><br>${escapeHtml(validationScore.label || "Unknown")} (${escapeHtml(String(validationScore.score || ""))}/10)${validationScore.reason ? ` - ${escapeHtml(validationScore.reason)}` : ""}</p>` : ""}
       ${validationSummary ? `<p><b>Validation summary:</b><br>${escapeHtml(validationSummary)}</p>` : ""}
       ${activeProject.execution_plan ? `<p><b>Execution summary:</b><br>${escapeHtml(activeProject.execution_plan.summary || "")}</p>` : ""}
+      ${activeProject.strategy_agent ? `<p><b>AI diagnosis:</b><br>${escapeHtml(activeProject.strategy_agent.diagnosis?.stage || "Unknown")} - ${escapeHtml(activeProject.strategy_agent.diagnosis?.bottleneck || "No bottleneck yet")}</p>` : ""}
+      ${activeProject.strategy_agent?.next_best_action ? `<p><b>Next best action:</b><br>${escapeHtml(activeProject.strategy_agent.next_best_action)}</p>` : ""}
       ${activeProject.first_customer_pack?.pricing_offer ? `<p><b>First pricing offer:</b><br>${escapeHtml(activeProject.first_customer_pack.pricing_offer.package_name || "")} - ${escapeHtml(activeProject.first_customer_pack.pricing_offer.price_range || "")}</p>` : ""}
       <p><b>Linked tickets:</b><br>${escapeHtml(String(linkedTickets.length))}</p>
     `;
@@ -1470,8 +1639,10 @@ function renderActiveProjectPanel(){
       </div>
       <div class="project-actions">
         <button class="project-tab" onclick="continueActiveCoach()">Continue with AI Coach</button>
+        <button class="project-tab" onclick="openRagAdvisorModal()">Run Knowledge Advisor</button>
         <button class="project-tab" onclick="runValidationToolkit()">Run Validation Toolkit</button>
         <button class="project-tab" onclick="runLaunchAgent()">Run Launch Agent</button>
+        <button class="project-tab" onclick="runProjectStrategyAgent()">Run Strategy Agent</button>
         <button class="project-tab" onclick="runFirstCustomerPack()">Run First Customer Pack</button>
         <button class="project-tab" onclick="pushToServiceNow()">Create ServiceNow Project Ticket</button>
         <button class="project-tab" onclick="exportActiveProjectPdf()">Export Project to PDF</button>
@@ -1552,6 +1723,7 @@ function setActiveProject(index){
     current_goal: `Validate ${idea.title || "this idea"} with a narrow audience and get the first real customer conversation.`,
     progress: {
       idea_selected: true,
+      knowledge_advisor_completed: false,
       validation_completed: false,
       execution_plan_opened: false,
       first_customer_pack_ready: false,
@@ -1693,6 +1865,154 @@ async function runLaunchAgent(){
   } catch(err){
     removeMessage(loadingId);
     addMessage(`❌ Error: ${err.message || err}`, "ai");
+  }
+}
+
+async function runProjectStrategyAgent(){
+  if(!activeProject) return;
+  if(!(await canUseAction("strategy_agent"))) return;
+
+  collapseProjectForResult();
+  const loadingId = addMessage(`⏳ Strategy Agent is diagnosing <b>${escapeHtml(activeProject.title)}</b> and building the next workflow...`, "ai");
+  trackEvent("strategy_agent_run", { idea_title: activeProject.title });
+
+  try{
+    const res = await fetch("https://skill2income-api.onrender.com/project-strategy-agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        project: activeProject,
+        history: messages.map(m => ({
+          role: m.role,
+          text: getHistoryText(m)
+        }))
+      })
+    });
+
+    if(!res.ok){
+      removeMessage(loadingId);
+      addMessage(`❌ Strategy Agent could not finish. Server returned ${res.status}.`, "ai");
+      trackEvent("strategy_agent_failed", { idea_title: activeProject.title, error: `Server returned ${res.status}` });
+      return;
+    }
+
+    const data = await res.json();
+    const strategy = data?.result;
+    if(!strategy || Array.isArray(strategy)){
+      removeMessage(loadingId);
+      addMessage("⚠️ Strategy Agent response format not supported.", "ai");
+      trackEvent("strategy_agent_failed", { idea_title: activeProject.title, error: "Unsupported response format" });
+      return;
+    }
+
+    removeMessage(loadingId);
+    activeProject.strategy_agent = strategy;
+    appendActiveProjectTimeline("strategy_agent", "Strategy Agent completed", {
+      summary: strategy?.next_best_action || "A structured next-step workflow was generated."
+    });
+    saveActiveProjectToStore(activeProject);
+    renderActiveProjectPanel();
+
+    const html = renderStrategyAgent(strategy, activeProject.title || "Project Strategy Agent") + renderUpgradePrompt("strategy");
+    addMessage(html, "ai");
+    messages.push({
+      role: "ai",
+      text: html,
+      historyText: JSON.stringify({ strategy_agent_for: activeProject.title, result: strategy })
+    });
+    saveChat();
+    recordUsage("strategy_agent");
+    trackEvent("strategy_agent_succeeded", { idea_title: activeProject.title, stage: strategy?.diagnosis?.stage || "" });
+  } catch(err){
+    removeMessage(loadingId);
+    const errorText = err.message || String(err);
+    addMessage(`❌ Strategy Agent failed: ${escapeHtml(errorText)}`, "ai");
+    trackEvent("strategy_agent_failed", { idea_title: activeProject.title, error: errorText });
+  }
+}
+
+async function submitRagAdvisor(){
+  if(!activeProject) return;
+  if(!(await canUseAction("rag_advisor"))) return;
+
+  const question = document.getElementById("ragAdvisorQuestion").value.trim();
+  if(!question){
+    alert("Please add a question for the Knowledge Advisor.");
+    return;
+  }
+  if(!knowledgeItems.length){
+    closeRagAdvisorModal();
+    addMessage("⚠️ Add at least one note in the Knowledge Base before running the Knowledge Advisor.", "ai");
+    openKnowledgeBaseModal();
+    return;
+  }
+
+  closeRagAdvisorModal();
+  collapseProjectForResult();
+  const loadingId = addMessage(`⏳ Knowledge Advisor is reviewing your saved notes for <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
+  trackEvent("rag_advisor_started", { idea_title: activeProject.title, knowledge_notes: knowledgeItems.length });
+
+  try{
+    const res = await fetch("https://skill2income-api.onrender.com/rag-advisor", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        project: activeProject,
+        question,
+        knowledge_items: knowledgeItems.map(item => ({
+          title: item.title || "",
+          source: item.source || "",
+          content: item.content || ""
+        })),
+        history: messages.map(m => ({
+          role: m.role,
+          text: getHistoryText(m)
+        }))
+      })
+    });
+
+    const data = await res.json();
+    removeMessage(loadingId);
+
+    if(!res.ok || data?.error){
+      const errorText = data?.error || `Server returned ${res.status}`;
+      addMessage(`❌ Knowledge Advisor failed: ${escapeHtml(errorText)}`, "ai");
+      trackEvent("rag_advisor_failed", { idea_title: activeProject.title, error: errorText });
+      return;
+    }
+
+    const advisor = data?.result || {};
+    activeProject.rag_advisor = advisor;
+    activeProject.progress = activeProject.progress || {};
+    activeProject.progress.knowledge_advisor_completed = true;
+    appendActiveProjectTimeline("knowledge_advisor", "Knowledge Advisor completed", {
+      summary: advisor.retrieval_summary || `Reviewed saved knowledge notes for ${activeProject.title}.`
+    });
+    saveActiveProjectToStore(activeProject);
+    renderActiveProjectPanel();
+
+    const html = renderRagAdvisor(advisor, activeProject.title || "Knowledge Advisor") + renderUpgradePrompt("knowledge");
+    addMessage(html, "ai");
+    messages.push({
+      role: "ai",
+      text: html,
+      historyText: JSON.stringify({ rag_advisor_for: activeProject.title, question, result: advisor })
+    });
+    saveChat();
+    recordUsage("rag_advisor");
+    trackEvent("rag_advisor_succeeded", {
+      idea_title: activeProject.title,
+      citations: Array.isArray(advisor?.cited_notes) ? advisor.cited_notes.length : 0
+    });
+  } catch(err){
+    removeMessage(loadingId);
+    const errorText = err.message || String(err);
+    addMessage(`❌ Knowledge Advisor failed: ${escapeHtml(errorText)}`, "ai");
+    trackEvent("rag_advisor_failed", { idea_title: activeProject.title, error: errorText });
   }
 }
 
@@ -3136,6 +3456,62 @@ function renderLaunchAgent(plan, ideaTitle){
       <ol>
         ${launchDays.map(day => `<li>${escapeHtml(day)}</li>`).join("")}
       </ol>
+    </div>
+  `;
+}
+
+function renderRagAdvisor(plan, ideaTitle){
+  const citedNotes = Array.isArray(plan?.cited_notes) ? plan.cited_notes : [];
+  const recommendedActions = Array.isArray(plan?.recommended_actions) ? plan.recommended_actions : [];
+  const knowledgeGaps = Array.isArray(plan?.knowledge_gaps) ? plan.knowledge_gaps : [];
+
+  return `
+    <div style="margin-bottom:15px; padding:15px; background:#0b1220; border:2px solid #34d399; border-radius:12px;">
+      <div style="color:#34d399; font-weight:bold; margin-bottom:8px;">Knowledge Advisor</div>
+      <h3 style="color:#d1fae5;">${escapeHtml(ideaTitle)}</h3>
+      <p><b>Knowledge summary:</b><br>${escapeHtml(plan?.retrieval_summary || "No retrieval summary available.")}</p>
+      <p><b>Grounded answer:</b><br>${escapeHtml(plan?.answer || "")}</p>
+      <p><b>Cited notes:</b></p>
+      <ul>${citedNotes.length ? citedNotes.map(item => `<li>${escapeHtml(item)}</li>`).join("") : "<li>No note citations available.</li>"}</ul>
+      <p><b>Recommended actions:</b></p>
+      <ol>${recommendedActions.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ol>
+      <p><b>Knowledge gaps to clarify:</b></p>
+      <ul>${knowledgeGaps.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+    </div>
+  `;
+}
+
+function renderStrategyAgent(plan, ideaTitle){
+  const diagnosis = plan?.diagnosis || {};
+  const actionQueue = Array.isArray(plan?.action_queue) ? plan.action_queue : [];
+  const workflow = Array.isArray(plan?.agent_workflow) ? plan.agent_workflow : [];
+  const memoryUpdates = Array.isArray(plan?.memory_updates) ? plan.memory_updates : [];
+  const followUps = Array.isArray(plan?.follow_up_questions) ? plan.follow_up_questions : [];
+
+  return `
+    <div style="margin-bottom:15px; padding:15px; background:#111827; border:2px solid #60a5fa; border-radius:12px;">
+      <div style="color:#60a5fa; font-weight:bold; margin-bottom:8px;">Project Strategy Agent</div>
+      <h3 style="color:#bfdbfe;">${escapeHtml(ideaTitle)}</h3>
+      <p><b>Stage:</b> ${escapeHtml(diagnosis.stage || "Unknown")} | <b>Confidence:</b> ${escapeHtml(String(diagnosis.confidence || ""))}/10</p>
+      <p><b>Main bottleneck:</b><br>${escapeHtml(diagnosis.bottleneck || "")}</p>
+      <p><b>Why this diagnosis:</b><br>${escapeHtml(diagnosis.reason || "")}</p>
+      <p><b>Next best action:</b><br>${escapeHtml(plan?.next_best_action || "")}</p>
+      <p><b>Action Queue:</b></p>
+      <ol>
+        ${actionQueue.map(item => `<li><b>${escapeHtml(item.step || "")}</b><br>Owner: ${escapeHtml(item.owner || "")}<br>Success signal: ${escapeHtml(item.success_signal || "")}</li>`).join("")}
+      </ol>
+      <p><b>Agent Workflow:</b></p>
+      <ul>
+        ${workflow.map(item => `<li><b>${escapeHtml(item.agent || "")}</b>: ${escapeHtml(item.purpose || "")}<br>Input: ${escapeHtml(item.input_needed || "")}<br>Output: ${escapeHtml(item.output_expected || "")}</li>`).join("")}
+      </ul>
+      <p><b>Memory updates:</b></p>
+      <ul>
+        ${memoryUpdates.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+      <p><b>Follow-up questions:</b></p>
+      <ul>
+        ${followUps.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
     </div>
   `;
 }
