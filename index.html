@@ -1476,9 +1476,24 @@ function renderLaunchAgent(plan, ideaTitle){
   `;
 }
 
+function normalizeServiceNowRecordUrl(result){
+  const table = String(result?.table || "incident").trim();
+  const sysId = String(result?.sys_id || "").trim();
+  const rawUrl = String(result?.url || "").trim();
+
+  if(sysId){
+    const instanceMatch = rawUrl.match(/^(https?:\/\/[^/]+)/i);
+    const instanceBase = instanceMatch ? instanceMatch[1] : "https://dev350339.service-now.com";
+    return `${instanceBase}/nav_to.do?uri=${encodeURIComponent(`${table}.do?sys_id=${sysId}`)}`;
+  }
+
+  return rawUrl;
+}
+
 function renderServiceNowResult(result, ideaTitle){
-  const recordUrl = result?.url
-    ? `<p><b>Record URL:</b><br><a href="${escapeHtml(result.url)}" target="_blank">${escapeHtml(result.url)}</a></p>`
+  const safeUrl = normalizeServiceNowRecordUrl(result);
+  const recordUrl = safeUrl
+    ? `<p><b>Record URL:</b><br><a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(safeUrl)}</a></p>`
     : "";
 
   return `
@@ -1494,8 +1509,9 @@ function renderServiceNowResult(result, ideaTitle){
 }
 
 function renderIssueResult(result, issueTitle){
-  const recordUrl = result?.url
-    ? `<p><b>Record URL:</b><br><a href="${escapeHtml(result.url)}" target="_blank">${escapeHtml(result.url)}</a></p>`
+  const safeUrl = normalizeServiceNowRecordUrl(result);
+  const recordUrl = safeUrl
+    ? `<p><b>Record URL:</b><br><a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(safeUrl)}</a></p>`
     : "";
 
   return `
