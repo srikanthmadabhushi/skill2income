@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Skill2Income Pricing</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+body {
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+  background: radial-gradient(circle at top left, #11203b 0%, #020617 52%, #01030a 100%);
+  color: #f8fafc;
+}
+.page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 32px 20px 56px;
+}
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 32px;
+}
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.nav-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.btn {
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #f8fafc;
+  border-radius: 999px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.btn.primary {
+  background: #22c55e;
+  color: #04130b;
+  border-color: #22c55e;
+}
+.hero {
+  background: linear-gradient(145deg, rgba(15, 23, 42, 0.94), rgba(3, 7, 18, 0.98));
+  border: 1px solid #1e293b;
+  border-radius: 28px;
+  padding: 34px;
+  box-shadow: 0 28px 80px rgba(2, 6, 23, 0.4);
+}
+.eyebrow {
+  color: #38bdf8;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+.hero h1 {
+  margin: 0 0 14px 0;
+  font-size: 42px;
+  line-height: 1.08;
+  max-width: 720px;
+}
+.hero p {
+  color: #cbd5e1;
+  max-width: 760px;
+  line-height: 1.7;
+  font-size: 16px;
+}
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 26px;
+}
+.plan-card {
+  background: rgba(15, 23, 42, 0.92);
+  border: 1px solid #1e293b;
+  border-radius: 24px;
+  padding: 24px;
+}
+.plan-card.featured {
+  border-color: #22c55e;
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.18), 0 24px 70px rgba(34, 197, 94, 0.12);
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.12);
+  color: #7dd3fc;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
+.plan-card h2 {
+  margin: 0;
+  font-size: 28px;
+}
+.price {
+  margin: 12px 0 10px 0;
+  font-size: 42px;
+  font-weight: 700;
+}
+.price small {
+  font-size: 14px;
+  color: #94a3b8;
+  font-weight: 500;
+}
+.plan-card p {
+  color: #cbd5e1;
+  line-height: 1.6;
+}
+.feature-list {
+  margin: 18px 0 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+.feature-list li {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(2, 6, 23, 0.88);
+  color: #e2e8f0;
+}
+.section {
+  margin-top: 28px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.mini-card {
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid #1e293b;
+  border-radius: 20px;
+  padding: 18px;
+}
+.mini-card h3 {
+  margin: 0 0 10px 0;
+}
+.mini-card p {
+  margin: 0;
+  color: #94a3b8;
+  line-height: 1.6;
+}
+@media (max-width: 900px) {
+  .plan-grid,
+  .section {
+    grid-template-columns: 1fr;
+  }
+  .hero h1 {
+    font-size: 32px;
+  }
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="topbar">
+    <div class="brand">🚀 Skill2Income AI</div>
+    <div class="nav-actions">
+      <button class="btn" onclick="window.location.href='index.html'">Back to App</button>
+      <button class="btn primary" onclick="window.location.href='index.html'">Start Free</button>
+    </div>
+  </div>
+
+  <section class="hero">
+    <div class="eyebrow">Pricing</div>
+    <h1>Choose the plan that matches how serious you are about turning ideas into income.</h1>
+    <p>Skill2Income is built to move users from ideas to validation, execution, launch assets, and support tracking. Start free, then upgrade when you want more volume, faster progress, and cleaner exports.</p>
+
+    <div class="plan-grid">
+      <div class="plan-card">
+        <div class="badge">Free</div>
+        <h2>Starter</h2>
+        <div class="price">$0 <small>/ month</small></div>
+        <p>Good for first-time users exploring ideas, validating one direction, and testing the core workflow.</p>
+        <ul class="feature-list">
+          <li>Idea generation workspace</li>
+          <li>Execution plan for selected ideas</li>
+          <li>Validation toolkit access</li>
+          <li>Launch Agent and First Customer Pack preview</li>
+          <li>Basic ServiceNow ticket workflow</li>
+        </ul>
+      </div>
+
+      <div class="plan-card featured">
+        <div class="badge">Most Valuable</div>
+        <h2>Pro</h2>
+        <div class="price">Coming Soon <small>/ upgrade path</small></div>
+        <p>For users who want unlimited workflows, richer exports, stronger coaching, and a more complete business execution workspace.</p>
+        <ul class="feature-list">
+          <li>Unlimited idea generation and comparisons</li>
+          <li>Unlimited Validation Toolkit and Launch Agent runs</li>
+          <li>Unlimited First Customer Packs and PDF exports</li>
+          <li>Deeper AI Coach workflows and project support</li>
+          <li>Premium templates, richer summaries, and advanced workspace actions</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="mini-card">
+      <h3>Why people upgrade</h3>
+      <p>They stop treating the app like a one-time idea generator and start using it as a serious execution workspace.</p>
+    </div>
+    <div class="mini-card">
+      <h3>Best for LinkedIn visitors</h3>
+      <p>The polished workflow, project timeline, exports, and launch assets make the value easy to understand quickly.</p>
+    </div>
+    <div class="mini-card">
+      <h3>Best use of Pro later</h3>
+      <p>Multiple project cycles, richer exports, advanced packs, and stronger in-workflow guidance for users ready to move faster.</p>
+    </div>
+  </section>
+</div>
+</body>
+</html>
