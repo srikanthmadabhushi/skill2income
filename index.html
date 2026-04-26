@@ -2035,16 +2035,21 @@ function exportActiveProjectPdf(){
   }
 
   const wrapper = document.createElement("div");
-  wrapper.style.position = "absolute";
+  wrapper.style.position = "fixed";
   wrapper.style.left = "0";
   wrapper.style.top = "0";
-  wrapper.style.width = "794px";
-  wrapper.style.padding = "0";
+  wrapper.style.width = "100vw";
+  wrapper.style.height = "100vh";
+  wrapper.style.overflow = "auto";
+  wrapper.style.padding = "24px";
+  wrapper.style.boxSizing = "border-box";
   wrapper.style.background = "white";
-  wrapper.style.opacity = "0";
-  wrapper.style.pointerEvents = "none";
-  wrapper.style.zIndex = "-1";
-  wrapper.innerHTML = buildProjectExportHtml(activeProject);
+  wrapper.style.zIndex = "99999";
+  wrapper.innerHTML = `
+    <div style="max-width:794px; margin:0 auto;">
+      ${buildProjectExportHtml(activeProject)}
+    </div>
+  `;
   document.body.appendChild(wrapper);
 
   setTimeout(() => {
