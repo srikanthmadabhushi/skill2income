@@ -438,7 +438,6 @@ function goPricing(){
 function renderTopBarActions(user){
   if(user){
     topBarActions.innerHTML = `
-      <button class="top-bar-btn" onclick="goPricing()">Pricing</button>
       <button class="top-bar-btn primary" onclick="showUpgrade()">Upgrade</button>
     `;
   } else {
@@ -511,7 +510,6 @@ function renderGuestSidebar(){
   sidebar.innerHTML = `
     <button id="loginBtn" onclick="login()">🔐 Login</button>
     <button onclick="goPricing()">💳 Pricing</button>
-    <button onclick="showUpgrade()">💎 Upgrade Preview</button>
   `;
 }
 
@@ -698,8 +696,6 @@ function loadChatList(){
   <button id="logoutBtn" onclick="logout()">🚪 Logout</button>
 
   <p style="font-size:12px;color:#94a3b8;">${auth.currentUser.email}</p>
-
-  <button onclick="showUpgrade()">💎 Upgrade</button>
 
   <hr>
 `;
