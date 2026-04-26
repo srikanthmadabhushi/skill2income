@@ -148,10 +148,26 @@ const userInput = document.getElementById("userInput");
 
 let currentChatId=null;
 let messages=[];
+let currentPlans=[];
 
 function getHistoryText(message){
   if (message.historyText) return message.historyText;
   return (message.text || "").replace(/<[^>]+>/g, "");
+}
+
+function isPlanPrompt(text){
+  return /(30\s*day|30\s*days|plan|roadmap|week by week|day by day)/i.test(text || "");
+}
+
+function getLatestTopic(){
+  for(let i = messages.length - 1; i >= 0; i--){
+    const msg = messages[i];
+    if(msg.role !== "user") continue;
+    const text = (msg.text || "").trim();
+    if(!text || isPlanPrompt(text)) continue;
+    return text;
+  }
+  return "";
 }
 
 // ENTER
@@ -291,6 +307,15 @@ function addMessage(text,type){
   return id; // 🔥 IMPORTANT
 }
 
+function escapeHtml(text){
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // QUICK FILL
 function quickFill(text){
  userInput.value=text;
@@ -342,6 +367,8 @@ async function sendMessage(){
   body: JSON.stringify({
     skills: extractSkill(text),
     interests: text,
+    request_type: isPlanPrompt(text) ? "plan" : "ideas",
+    plan_focus: isPlanPrompt(text) ? getLatestTopic() : "",
     time: "2 hours",
     history: messages.map(m => ({
       role: m.role,
@@ -388,7 +415,13 @@ if (
   )
 ){
   removeMessage(loadingId);
-  renderPlan(resultData);
+  const planHtml = renderPlan(resultData);
+  messages.push({
+    role: "ai",
+    text: planHtml,
+    historyText: JSON.stringify({ result: resultData })
+  });
+  saveChat();
   sendBtn.disabled = false;
   return;
 }
@@ -396,7 +429,7 @@ if (
 // ✅ Step 3 — NORMAL IDEAS FLOW
 removeMessage(loadingId);
 
-window.currentPlans = resultData;
+currentPlans = resultData;
 
 resultData.forEach((p, i)=>{
   const steps = p && Array.isArray(p.steps)
@@ -480,6 +513,12 @@ ${p.personal_reason || "Based on your interests and skills"}
       ${p.pro_tip || "Start small and validate quickly"}
     </div>
 
+    <div style="margin-top:12px;">
+      <button onclick="generateExecutionPlan(${i})" style="padding:8px 12px; border:none; border-radius:8px; background:#38bdf8; color:#020617; font-weight:600; cursor:pointer;">
+        Get Execution Plan
+      </button>
+    </div>
+
     <p>🔗 <b>Start Here:</b><br>${getSmartLinks(p.title)}</p>
 
   </div>
@@ -541,7 +580,7 @@ function deleteChat(id){
 
 // SAVE
 function savePlan(index){
-  const plan = window.currentPlans[index];
+  const plan = currentPlans[index];
   db.collection("users").doc(auth.currentUser.uid)
     .collection("plans").add({ ...plan,
       createdAt: new Date()
@@ -576,7 +615,7 @@ function goDashboard(){
 
 // INIT
 function copyPlan(index){
-  const plan = window.currentPlans[index];
+  const plan = currentPlans[index];
 
   const text = `
 ${plan.title}
@@ -616,12 +655,12 @@ function showUpgrade(){
   alert("💎 Premium coming soon!\n\n✔ Unlimited plans\n✔ Advanced AI\n✔ Export features");
 }
 function reusePlan(index){
-  if(!window.currentPlans){
+  if(!currentPlans || !currentPlans.length){
     alert("⚠️ No plan available yet");
     return;
   }
 
-  const plan = window.currentPlans[index];
+  const plan = currentPlans[index];
 
   const text = `
 ${plan.title}
@@ -638,15 +677,68 @@ function removeMessage(id){
 }
 
 function extractSkill(text){
-  const words = text.split(" ");
-  return words.slice(0,2).join(" "); // simple extraction
+  if (isPlanPrompt(text)) return text;
+  return text.trim();
+}
+
+async function generateExecutionPlan(index){
+  const idea = currentPlans[index];
+  if(!idea) return;
+
+  const loadingId = addMessage(`⏳ Building execution plan for <b>${escapeHtml(idea.title)}</b>...`, "ai");
+
+  try{
+    const res = await fetch("https://skill2income-api.onrender.com/generate-income-plan", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        request_type: "execution_plan",
+        idea_title: idea.title || "",
+        idea_description: idea.description || "",
+        interests: idea.title || "",
+        history: messages.map(m => ({
+          role: m.role,
+          text: getHistoryText(m)
+        }))
+      })
+    });
+
+    if(!res.ok){
+      removeMessage(loadingId);
+      addMessage("❌ Could not build execution plan. Try again.","ai");
+      return;
+    }
+
+    const data = await res.json();
+    const plan = data?.result;
+    if(!plan || Array.isArray(plan)){
+      removeMessage(loadingId);
+      addMessage("⚠️ Execution plan format not supported.","ai");
+      return;
+    }
+
+    removeMessage(loadingId);
+    const html = renderExecutionPlan(plan, idea.title || "Execution Plan");
+    addMessage(html, "ai");
+    messages.push({
+      role: "ai",
+      text: html,
+      historyText: JSON.stringify({ execution_plan_for: idea.title, result: plan })
+    });
+    saveChat();
+  } catch(err){
+    removeMessage(loadingId);
+    addMessage(`❌ Error: ${err.message || err}`, "ai");
+  }
 }
 
 function renderPlan(plan){
 
   if (!Array.isArray(plan)) {
     addMessage("⚠️ Plan format not supported","ai");
-    return;
+    return "";
   }
 
   let html = `<div style="padding:10px;">`;
@@ -668,6 +760,7 @@ if (!Array.isArray(tasks)) {
     html += `
       <div style="margin-bottom:15px; padding:10px; background:#111827; border-radius:10px;">
         <h3 style="color:#22c55e;">📅 ${weekTitle}</h3>
+        <p style="color:#38bdf8; margin:6px 0 10px 0;"><b>Goal:</b> ${weekObj?.goal || "Complete this week's key milestone."}</p>
         <ul>
          ${(Array.isArray(tasks) ? tasks : typeof tasks === "string"
       ? [tasks]
@@ -681,6 +774,29 @@ if (!Array.isArray(tasks)) {
   html += `</div>`;
 
   addMessage(html,"ai");
+  return html;
+}
+
+function renderExecutionPlan(plan, ideaTitle){
+  const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  const quickWins = Array.isArray(plan.quick_wins) ? plan.quick_wins : [];
+
+  return `
+    <div style="margin-bottom:15px; padding:15px; background:#08111f; border:2px solid #38bdf8; border-radius:12px;">
+      <div style="color:#38bdf8; font-weight:bold; margin-bottom:8px;">Execution Plan</div>
+      <h3 style="color:#22c55e;">${escapeHtml(plan.title || `Launch Plan for ${ideaTitle}`)}</h3>
+      <p><b>Summary:</b><br>${escapeHtml(plan.summary || "")}</p>
+      <p><b>5 Steps to Start:</b></p>
+      <ol>
+        ${steps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}
+      </ol>
+      <p><b>Quick Wins:</b></p>
+      <ul>
+        ${quickWins.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+      <p><b>First Offer:</b><br>${escapeHtml(plan.first_offer || "")}</p>
+    </div>
+  `;
 }
 
 </script>
