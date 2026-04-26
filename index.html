@@ -54,13 +54,59 @@ body { margin:0; font-family:'Inter'; background:#020617; color:white;}
   background:#1f2937; border:none; color:white;
 }
 
-.input-box { display:flex; padding:10px;}
-input { flex:1; padding:10px; border-radius:8px; border:none;}
-button.send {  margin-left:10px; background:#22c55e;
-  padding:10px; border-radius:8px; color:white;
+.input-box {display: flex; align-items: center; gap: 8px; padding: 10px;background: #020617; position: sticky; bottom: 0;
+}
+
+
+input { flex: 1; padding: 10px; border-radius: 8px;border: none; font-size: 14px;
+}
+
+button.send {padding: 10px 14px; border-radius: 8px; background: #22c55e; color: white; border: none; cursor: pointer; white-space: nowrap;
 }
 
 a { color:#60a5fa; text-decoration:underline; }
+
+@media (max-width: 768px) { 
+
+  .app {
+    flex-direction: column; height: auto;
+  }
+
+  .sidebar { width: 100%; height: auto; display: flex; overflow-x: auto; gap: 8px;
+  }
+
+  .sidebar button {flex: 1; font-size: 12px; padding: 8px;
+  }
+
+  .chat-container { flex: 1; display: flex; flex-direction: column; height: 100vh;
+  }
+
+  .chat-box {flex: 1; overflow-y: auto;
+  }
+
+  .message {max-width: 95%; font-size: 14px;
+  }
+
+  .input-box {flex-direction: row; padding: 8px;
+  }
+
+  input {font-size: 13px;
+  }
+
+  button.send {padding: 8px 10px; font-size: 12px;
+  }
+
+  .suggestions {display: flex;overflow-x: auto;
+  }
+
+  .suggestions button { white-space: nowrap; font-size: 12px;
+  }
+}
+.sidebar {transition: all 0.3s ease;
+}
+
+.sidebar.hide {display: none;
+}
 </style>
 
 </head>
@@ -76,11 +122,6 @@ a { color:#60a5fa; text-decoration:underline; }
 
 <div id="chat" class="chat-box"></div>
 
-<div class="suggestions">
-<button onclick="quickFill('I know Python freelance 2 hours')">💻 Python Freelance</button>
-<button onclick="quickFill('student income online')">🎓 Student Income</button>
-<button onclick="quickFill('passive income ideas')">💰 Passive Income</button>
-</div>
 
 <div class="input-box">
 <input id="userInput" placeholder="Type your idea...">
@@ -122,10 +163,16 @@ function login(){
 }
 
 // AUTH
-auth.onAuthStateChanged(user=>{
- if(user) loadChatList();
- else sidebar.innerHTML=`<button onclick="login()">🔐 Login</button>`;
+auth.onAuthStateChanged(user => {
+  if (user) {
+    loadChatList();
+  } else {
+    sidebar.innerHTML = `
+      <button id="loginBtn" onclick="login()">🔐 Login</button>
+    `;
+  }
 });
+
 
 // SMART LINKS
 function getSmartLinks(title){
@@ -157,16 +204,18 @@ function loadChatList(){
  .collection("chats").orderBy("createdAt","desc")
  .get().then(snapshot=>{
 
-  sidebar.innerHTML=`
-    <button onclick="newChat()">➕ New Chat</button>
-    <button onclick="goDashboard()">📊 Saved Plans</button>
-    <button onclick="login()">🔐 Login</button>
-    <p style="font-size:12px;color:#94a3b8;">${auth.currentUser.email}</p>
-    <button onclick="logout()">🚪 Logout</button>
-    <button onclick="showUpgrade()">💎 Upgrade</button>
+  sidebar.innerHTML = `
+  <button onclick="newChat()">➕ New Chat</button>
+  <button onclick="goDashboard()">📊 Saved Plans</button>
 
-    <hr>
-  `;
+  <button id="logoutBtn" onclick="logout()">🚪 Logout</button>
+
+  <p style="font-size:12px;color:#94a3b8;">${auth.currentUser.email}</p>
+
+  <button onclick="showUpgrade()">💎 Upgrade</button>
+
+  <hr>
+`;
 
   snapshot.forEach(doc=>{
     const container=document.createElement("div");
@@ -280,16 +329,22 @@ async function sendMessage(){
   const loadingId = addMessage("⏳ Thinking... generating your plan","ai");
 
   try{
-    const res = await fetch("https://skill2income-api.onrender.com/generate-income-plan",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        skills:text,
-        interests:text,
-        time:"2 hours",
-        history:messages.slice(-5)
-      })
-    });
+   const res = await fetch("https://skill2income-api.onrender.com/generate-income-plan", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    skills: extractSkill(text),
+    interests: text,
+    time: "2 hours",
+    history: messages.map(m => ({
+      role: m.role,
+      text: m.text.replace(/<[^>]+>/g, "")
+    })),
+    timestamp: Date.now()
+  })
+});
 
     if(!res.ok){
       removeMessage(loadingId);
@@ -300,86 +355,151 @@ async function sendMessage(){
 
     const data = await res.json();
 
-    if(!data.result || !Array.isArray(data.result)){
-      removeMessage(loadingId);
-      addMessage("⚠️ Invalid response. Try again.","ai");
-      sendBtn.disabled = false;
-      return;
-    }
-
-    removeMessage(loadingId);
-
-    window.currentPlans = data.result;
-
-data.result.forEach((p, i)=>{
-
-  const steps = p.steps ? p.steps.map(s => "• " + s).join("<br>") : "";
-  const tools = p.tools_needed ? p.tools_needed.join(", ") : "";
-
-  const html=`
-<div style="border:1px solid #1f2937; padding:15px; border-radius:12px; margin-bottom:15px; background:#020617">
-
-  <h3 style="color:#22c55e;">🚀 ${p.title}</h3>
-
-  <p><b>👤 Who it's for:</b><br>
-  ${
-    p.who_is_this_for && p.who_is_this_for !== "General audience"
-      ? p.who_is_this_for
-      : ["Beginners","Students","Professionals"][i % 3]
-  }
-  </p>
-
-  <p><b>💡 Why it works:</b><br>
-  ${p.why_it_works || "Growing demand"}
-  </p>
-
-  <p><b>🛠 Tools:</b><br>${tools || "Fiverr, Upwork"}</p>
-
-  <p><b>📋 Description:</b><br>${p.description}</p>
-
-  <p><b>🪜 Steps:</b><br>${steps}</p>
-
-  <p><b>⏳ Time:</b> ${p.time_to_start || "1–3 days"}</p>
-
-  <p><b>💰 Earnings:</b> ${p.earnings} | ${p.monthly_estimate}</p>
-
-  <p><b>⚡ Difficulty:</b> ${p.difficulty}</p>
-
-  <div style="background:#111827;padding:10px;border-radius:8px;">
-    <b>🔥 Pro Tip:</b><br>
-    ${p.pro_tip || "Start small and validate quickly"}
-  </div>
-
-  <p><b>🔗 Start Here:</b><br>${getSmartLinks(p.title)}</p>
-
-  <button onclick='reusePlan(${i})'>🔁 Reuse</button>
-  <button onclick='savePlan(${i})'>💾 Save</button>
-  <button onclick='copyPlan(${i})'>📋 Copy</button>
-  <button onclick="exportPDF(this)">📄 PDF</button>
-
-</div>
-`;
-
-  addMessage(html,"ai");
-  messages.push({role:"ai",text:html});
-
-      
-    });
-
-    saveChat();
-    sendBtn.disabled = false;
-
-  } catch(err){
-    console.error(err);
-    removeMessage(loadingId);
-    addMessage("❌ Something went wrong. Try again.","ai");
-    sendBtn.disabled = false;
-  }
+// ✅ Step 1 — validate response safely
+if (!data || !data.result) {
+  removeMessage(loadingId);
+  addMessage("⚠️ Invalid response from server.","ai");
+  sendBtn.disabled = false;
+  return;
 }
 
+// 🔥 Convert to array if needed
+let resultData = data.result;
 
+if (!Array.isArray(resultData)) {
+  resultData = [resultData];
+}
 
+// ✅ Step 2 — PLAN DETECTION (SAFE)
+const firstItem = resultData[0];
 
+if (
+  Array.isArray(resultData) &&
+  resultData.length > 0 &&
+  (
+    resultData[0].week || 
+    resultData[0].tasks || 
+    Object.keys(resultData[0])[0]?.toLowerCase().includes("week")
+  )
+){
+  removeMessage(loadingId);
+  renderPlan(resultData);
+  sendBtn.disabled = false;
+  return;
+}
+
+// ✅ Step 3 — NORMAL IDEAS FLOW
+removeMessage(loadingId);
+
+window.currentPlans = resultData;
+
+resultData.forEach((p, i)=>{
+  const steps = p && Array.isArray(p.steps)
+  ? p.steps.map(s => "• " + s).join("<br>")
+  : "";
+
+const tools = p && Array.isArray(p.tools_needed)
+  ? p.tools_needed.join(", ")
+  : "Fiverr, Upwork";
+
+  // 🔥 NEW: Decision Engine UI
+  const isBest = p && p.best_option;
+
+  const riskColor = {Low: "#22c55e", Medium: "#facc15", High: "#ef4444"
+}[(p && p.risk_level) || "Medium"] || "#94a3b8";
+
+  const html = `
+  <div style="
+    border:2px solid ${isBest ? "#22c55e" : "#1f2937"};
+    padding:15px;
+    border-radius:12px;
+    margin-bottom:15px;
+    background:#020617;
+    box-shadow:${isBest ? "0 0 12px rgba(34,197,94,0.5)" : "none"}
+  ">
+
+    ${isBest ? `<div style="color:#22c55e; font-weight:bold; margin-bottom:8px;">🏆 Best Option</div>` : ""}
+
+    <h3 style="color:#22c55e;">🚀 ${p.title || "Income Idea"}</h3>
+
+    <div style="display:flex; gap:15px; margin:8px 0;">
+      <span style="color:#22c55e;">📊 Score: ${typeof p.score === "number" ? p.score : 70}/100</span>
+      <span style="color:${riskColor};">⚠️ Risk: ${p.risk_level || "Medium"}</span>
+    </div>
+
+    <p><b>👤 Who it's for:</b><br>
+    ${
+      p.who_is_this_for && p.who_is_this_for !== "General audience"
+        ? p.who_is_this_for
+        : ["Beginners","Students","Professionals"][i % 3]
+    }
+    </p>
+
+    <p><b>💡 Why it works:</b><br>
+    ${p.why_it_works || "Growing demand"}
+    </p>
+
+    <p><b>🛠 Tools:</b> ${tools || "Fiverr, Upwork"}</p>
+
+    <p><b>📄 Description:</b><br>${p.description}</p>
+
+    <p><b>📋 Steps:</b><br>${steps}</p>
+
+    <p><b>⏳ Time:</b> ${p.time_to_start || "3–7 days"}</p>
+
+    <p><b>💰 Earnings:</b> ${p.earnings || ""} | ${p.monthly_estimate || ""}</p>
+
+    <p><b>⚡ Difficulty:</b> ${p.difficulty || "Beginner"}</p>
+    <p style="color:#38bdf8;"><b>⏳ Timeline:</b> ${p.timeline || "2–4 weeks"}</p>
+
+<p style="color:#facc15;"><b>🔁 What If:</b><br>
+${p.what_if || "More effort increases income"}
+</p>
+
+${p.best_option ? `
+<p style="color:#22c55e;"><b>⭐ Why this is best:</b><br>
+${p.reason_for_best || "Best balance of effort and reward"}
+</p>
+<p style="color:#38bdf8;"><b>📈 Growth Projection:</b></p>
+<p>Month 1: ${p.monthly_projection?.month1 || "$200"}</p>
+<p>Month 2: ${p.monthly_projection?.month2 || "$500"}</p>
+<p>Month 3: ${p.monthly_projection?.month3 || "$1000"}</p>
+
+<p style="color:#a78bfa;"><b>🧠 Why this suits you:</b><br>
+${p.personal_reason || "Based on your interests and skills"}
+</p>
+` : ""}
+
+    <div style="background:#111827; padding:10px; border-radius:8px;">
+      🔥 <b>Pro Tip:</b><br>
+      ${p.pro_tip || "Start small and validate quickly"}
+    </div>
+
+    <p>🔗 <b>Start Here:</b><br>${getSmartLinks(p.title)}</p>
+
+  </div>
+  `;
+
+  addMessage(html, "ai");
+
+  // ✅ CLEAN HISTORY (IMPORTANT FIX)
+  messages.push({
+    role: "ai",
+    text: p.title
+  });
+
+});
+
+sendBtn.disabled = false;
+saveChat();
+
+} catch(err){
+  console.error("FULL ERROR:", err);
+  removeMessage(loadingId);
+  addMessage(`❌ Error: ${err.message || err}`, "ai");
+  sendBtn.disabled = false;
+}
+}
 // LOAD CHAT
 function loadChat(id){
   db.collection("users").doc(auth.currentUser.uid)
@@ -390,14 +510,12 @@ function loadChat(id){
 
     messages = doc.data().messages || [];
 
-    // 🔥 IMPORTANT FIX
     chat.innerHTML = "";
 
     messages.forEach(m => {
       addMessage(m.text, m.role);
     });
 
-    // scroll fix
     chat.scrollTop = chat.scrollHeight;
   });
 }
@@ -504,6 +622,52 @@ ${plan.steps ? plan.steps.join(" ") : ""}
 function removeMessage(id){
   const el = document.querySelector(`[data-id='${id}']`);
   if(el) el.remove();
+}
+
+function extractSkill(text){
+  const words = text.split(" ");
+  return words.slice(0,2).join(" "); // simple extraction
+}
+
+function renderPlan(plan){
+
+  if (!Array.isArray(plan)) {
+    addMessage("⚠️ Plan format not supported","ai");
+    return;
+  }
+
+  let html = `<div style="padding:10px;">`;
+
+  plan.forEach((weekObj, i)=>{
+
+    const weekTitle = weekObj?.week || `Week ${i+1}`;
+
+let tasks = weekObj?.tasks;
+
+if (!Array.isArray(tasks)) {
+  if (typeof tasks === "string") {
+    tasks = [tasks];
+  } else {
+    tasks = Object.values(weekObj || {}).flat();
+  }
+}
+
+    html += `
+      <div style="margin-bottom:15px; padding:10px; background:#111827; border-radius:10px;">
+        <h3 style="color:#22c55e;">📅 ${weekTitle}</h3>
+        <ul>
+         ${(Array.isArray(tasks) ? tasks : typeof tasks === "string"
+      ? [tasks]
+      : Object.values(tasks || {})
+).map(t => `<li>${t}</li>`).join("")}
+        </ul>
+      </div>
+    `;
+  });
+
+  html += `</div>`;
+
+  addMessage(html,"ai");
 }
 
 </script>
