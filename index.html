@@ -646,6 +646,7 @@ function clearActiveProject(){
 async function runLaunchAgent(){
   if(!activeProject) return;
 
+  collapseActiveProject();
   const loadingId = addMessage(`⏳ Launch Agent is building assets for <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
   trackEvent("launch_agent_run", { idea_title: activeProject.title });
 
@@ -716,6 +717,7 @@ async function runLaunchAgent(){
 async function runValidationToolkit(){
   if(!activeProject) return;
 
+  collapseActiveProject();
   const loadingId = addMessage(`⏳ Validation Toolkit is analyzing <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
   trackEvent("validation_toolkit_run", { idea_title: activeProject.title });
 
