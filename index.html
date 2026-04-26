@@ -511,6 +511,18 @@ function renderGuestSidebar(){
   `;
 }
 
+function renderSignedInEmptyState(){
+  activeProjectMount.style.display = "";
+
+  if(chat.querySelector(".guest-hero") || chat.querySelector(".guest-steps") || chat.querySelector(".guest-proof")){
+    chat.innerHTML = "";
+  }
+
+  if(!messages.length && !chat.children.length){
+    addMessage("💡 Example: I know Python, want automation ideas for healthcare clinics","ai");
+  }
+}
+
 function closeLoginModal(){
   if(loginInProgress) return;
   loginStatusMessage.textContent = "";
@@ -625,7 +637,7 @@ auth.onAuthStateChanged(user => {
   renderTopBarActions(user);
   if (user) {
     loginModal.style.display = "none";
-    activeProjectMount.style.display = "";
+    renderSignedInEmptyState();
     loadChatList();
     loadActiveProject();
     loadSupportTickets();
@@ -633,6 +645,8 @@ auth.onAuthStateChanged(user => {
     activeProject = null;
     supportTickets = [];
     compareIdeas = [];
+    messages = [];
+    currentPlans = [];
     renderActiveProjectPanel();
     renderGuestSidebar();
     renderGuestLanding();
@@ -2453,18 +2467,11 @@ function exportPDF(btn){
   html2pdf().from(card).save("plan.pdf");
 }
 window.onload = () => {
-  renderActiveProjectPanel();
-  renderTopBarActions(auth.currentUser);
+  renderTopBarActions(null);
   const text = localStorage.getItem("reuseText");
   if(text){
     document.getElementById("userInput").value = text;
     localStorage.removeItem("reuseText");
-  }
-
-  if(auth.currentUser){
-    addMessage("💡 Example: I know Python, want automation ideas for healthcare clinics","ai");
-  } else {
-    renderGuestLanding();
   }
 };
 function showUpgrade(){
