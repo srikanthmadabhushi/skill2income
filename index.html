@@ -619,9 +619,23 @@ function addMessage(text,type){
   div.setAttribute("data-id", id);
 
   chat.appendChild(div);
-  chat.scrollTop=chat.scrollHeight;
+  scrollChatToBottom();
 
   return id; // 🔥 IMPORTANT
+}
+
+function scrollChatToBottom(){
+  requestAnimationFrame(() => {
+    chat.scrollTop = chat.scrollHeight;
+  });
+}
+
+function collapseProjectForResult(){
+  if(activeProject){
+    activeProjectCollapsed = true;
+    renderActiveProjectPanel();
+  }
+  scrollChatToBottom();
 }
 
 function escapeHtml(text){
@@ -879,6 +893,35 @@ function buildProjectAssets(project){
   };
 }
 
+function restoreChatContextFromMessages(messageList){
+  currentPlans = [];
+  compareIdeas = [];
+  selectedCoachIdea = null;
+
+  for(let i = messageList.length - 1; i >= 0; i--){
+    const historyText = messageList[i]?.historyText;
+    if(!historyText || typeof historyText !== "string") continue;
+
+    try{
+      const parsed = JSON.parse(historyText);
+      const result = parsed?.result;
+
+      if(
+        Array.isArray(result) &&
+        result.length &&
+        result.every(item => item && typeof item === "object") &&
+        result.some(item => item.title || item.description) &&
+        !result[0]?.week
+      ){
+        currentPlans = result;
+        return;
+      }
+    } catch(err){
+      // Ignore non-JSON history payloads.
+    }
+  }
+}
+
 function renderActiveProjectPanel(){
   if(!activeProject){
     activeProjectMount.innerHTML = `
@@ -1075,13 +1118,13 @@ function continueActiveCoach(){
     description: activeProject.description || ""
   };
   trackEvent("active_project_continue_coach", { idea_title: activeProject.title });
-  collapseActiveProject();
+  collapseProjectForResult();
   setInputValue(`Help me move forward with ${activeProject.title}`);
 }
 
 function reuseActiveProjectInChat(){
   if(!activeProject) return;
-  collapseActiveProject();
+  collapseProjectForResult();
   setInputValue(activeProject.title || "");
 }
 
@@ -1102,7 +1145,7 @@ function clearActiveProject(){
 async function runLaunchAgent(){
   if(!activeProject) return;
 
-  collapseActiveProject();
+  collapseProjectForResult();
   const loadingId = addMessage(`⏳ Launch Agent is building assets for <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
   trackEvent("launch_agent_run", { idea_title: activeProject.title });
 
@@ -1177,7 +1220,7 @@ async function runLaunchAgent(){
 async function runValidationToolkit(){
   if(!activeProject) return;
 
-  collapseActiveProject();
+  collapseProjectForResult();
   const loadingId = addMessage(`⏳ Validation Toolkit is analyzing <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
   trackEvent("validation_toolkit_run", { idea_title: activeProject.title });
 
@@ -1263,7 +1306,7 @@ async function runValidationToolkit(){
 async function runFirstCustomerPack(){
   if(!activeProject) return;
 
-  collapseActiveProject();
+  collapseProjectForResult();
   const loadingId = addMessage(`⏳ First Customer Pack is preparing outreach assets for <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
   trackEvent("first_customer_pack_started", { idea_title: activeProject.title });
 
@@ -1349,6 +1392,7 @@ async function runFirstCustomerPack(){
 async function pushToServiceNow(){
   if(!activeProject) return;
 
+  collapseProjectForResult();
   const loadingId = addMessage(`⏳ Sending <b>${escapeHtml(activeProject.title)}</b> to ServiceNow...`, "ai");
   trackEvent("servicenow_export_started", { idea_title: activeProject.title });
 
@@ -1573,6 +1617,9 @@ async function newChat(){
 
  currentChatId=doc.id;
  messages=[];
+ currentPlans=[];
+ compareIdeas=[];
+ selectedCoachIdea=null;
  chat.innerHTML="";
  trackEvent("new_chat_created");
  loadChatList();
@@ -1822,6 +1869,7 @@ function loadChat(id){
     currentChatId = id;
 
     messages = doc.data().messages || [];
+    restoreChatContextFromMessages(messages);
 
     chat.innerHTML = "";
 
@@ -1830,7 +1878,7 @@ function loadChat(id){
       addMessage(m.text, m.role);
     });
 
-    chat.scrollTop = chat.scrollHeight;
+    scrollChatToBottom();
   });
 }
 
@@ -2034,34 +2082,119 @@ function exportActiveProjectPdf(){
     return;
   }
 
-  const wrapper = document.createElement("div");
-  wrapper.style.position = "fixed";
-  wrapper.style.left = "0";
-  wrapper.style.top = "0";
-  wrapper.style.width = "100vw";
-  wrapper.style.height = "100vh";
-  wrapper.style.overflow = "auto";
-  wrapper.style.padding = "24px";
-  wrapper.style.boxSizing = "border-box";
-  wrapper.style.background = "white";
-  wrapper.style.zIndex = "99999";
-  wrapper.innerHTML = `
-    <div style="max-width:794px; margin:0 auto;">
-      ${buildProjectExportHtml(activeProject)}
-    </div>
-  `;
-  document.body.appendChild(wrapper);
+  const jsPDFCtor = window.jspdf?.jsPDF;
+  if(!jsPDFCtor){
+    alert("PDF export is not available right now.");
+    return;
+  }
 
-  setTimeout(() => {
-    html2pdf().from(wrapper).set({
-      margin: 10,
-      filename: `${(activeProject.title || "skill2income-project").replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.pdf`,
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
-      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
-    }).save().finally(() => {
-      wrapper.remove();
+  const doc = new jsPDFCtor({ unit: "mm", format: "a4", orientation: "portrait" });
+  const left = 12;
+  const right = 12;
+  const maxWidth = doc.internal.pageSize.getWidth() - left - right;
+  const pageHeight = doc.internal.pageSize.getHeight();
+  let y = 16;
+
+  const ensureSpace = (heightNeeded = 8) => {
+    if(y + heightNeeded > pageHeight - 14){
+      doc.addPage();
+      y = 16;
+    }
+  };
+
+  const addTextBlock = (text, options = {}) => {
+    const content = String(text || "").trim();
+    if(!content) return;
+    const fontSize = options.fontSize || 11;
+    const fontStyle = options.fontStyle || "normal";
+    const indent = options.indent || 0;
+    doc.setFont("helvetica", fontStyle);
+    doc.setFontSize(fontSize);
+    const lines = doc.splitTextToSize(content, maxWidth - indent);
+    const lineHeight = (fontSize * 0.45) + 1.8;
+    ensureSpace(lines.length * lineHeight + 3);
+    doc.text(lines, left + indent, y);
+    y += lines.length * lineHeight + (options.marginBottom ?? 3);
+  };
+
+  const addSection = (title) => {
+    ensureSpace(10);
+    addTextBlock(title, { fontSize: 14, fontStyle: "bold", marginBottom: 2 });
+  };
+
+  const addList = (items) => {
+    (items || []).forEach(item => {
+      addTextBlock(`• ${item}`, { indent: 2 });
     });
-  }, 50);
+  };
+
+  const tickets = getProjectTickets(activeProject);
+  const timeline = Array.isArray(activeProject.timeline) ? activeProject.timeline : [];
+  const executionSteps = Array.isArray(activeProject.execution_plan?.steps) ? activeProject.execution_plan.steps : [];
+  const validationQuestions = Array.isArray(activeProject.validation_toolkit?.outreach_questions) ? activeProject.validation_toolkit.outreach_questions : [];
+  const launchDays = Array.isArray(activeProject.launch_agent?.seven_day_plan) ? activeProject.launch_agent.seven_day_plan : [];
+  const proofPoints = Array.isArray(activeProject.first_customer_pack?.landing_page_copy?.proof_points) ? activeProject.first_customer_pack.landing_page_copy.proof_points : [];
+
+  addTextBlock(activeProject.title || "Skill2Income Project Export", { fontSize: 18, fontStyle: "bold", marginBottom: 4 });
+  addTextBlock("Skill2Income Project Export", { fontSize: 10, marginBottom: 6 });
+
+  addSection("Overview");
+  addTextBlock(`Description: ${activeProject.description || ""}`);
+  addTextBlock(`Audience: ${activeProject.who_is_this_for || ""}`);
+  addTextBlock(`Why it works: ${activeProject.why_it_works || ""}`);
+  addTextBlock(`Current goal: ${activeProject.current_goal || ""}`);
+  if(activeProject.validation_toolkit?.validation_summary){
+    addTextBlock(`Validation summary: ${activeProject.validation_toolkit.validation_summary}`);
+  }
+
+  if(activeProject.execution_plan){
+    addSection("Execution Plan");
+    addTextBlock(activeProject.execution_plan.summary || "");
+    addList(executionSteps);
+  }
+
+  if(activeProject.validation_toolkit){
+    addSection("Validation Toolkit");
+    addTextBlock(`Score: ${activeProject.validation_toolkit.validation_score?.label || ""} (${activeProject.validation_toolkit.validation_score?.score || ""}/10)`);
+    addList(validationQuestions);
+  }
+
+  if(activeProject.launch_agent){
+    addSection("Launch Agent");
+    addTextBlock(`Niche: ${activeProject.launch_agent.niche || ""}`);
+    addTextBlock(`First offer: ${activeProject.launch_agent.first_offer || ""}`);
+    addList(launchDays);
+  }
+
+  if(activeProject.first_customer_pack){
+    addSection("First Customer Pack");
+    addTextBlock(`Positioning: ${activeProject.first_customer_pack.positioning || ""}`);
+    addTextBlock(`Cold email: ${activeProject.first_customer_pack.cold_email || ""}`);
+    addTextBlock(`LinkedIn DM: ${activeProject.first_customer_pack.linkedin_dm || ""}`);
+    addTextBlock(`WhatsApp pitch: ${activeProject.first_customer_pack.whatsapp_pitch || ""}`);
+    addTextBlock(`Pricing: ${activeProject.first_customer_pack.pricing_offer?.package_name || ""} - ${activeProject.first_customer_pack.pricing_offer?.price_range || ""}`);
+    addList(proofPoints);
+  }
+
+  addSection("Project Timeline");
+  if(timeline.length){
+    timeline.forEach(item => {
+      addTextBlock(`${item.title || item.type || "Update"} - ${item.details?.summary || ""} (${formatDisplayDate(item.createdAt)})`);
+    });
+  } else {
+    addTextBlock("No timeline entries yet.");
+  }
+
+  addSection("Linked Tickets");
+  if(tickets.length){
+    tickets.forEach(ticket => {
+      addTextBlock(`${ticket.number || ""} - ${ticket.status || "Submitted"} - ${ticket.display || ticket.title || ""}`);
+    });
+  } else {
+    addTextBlock("No linked tickets yet.");
+  }
+
+  doc.save(`${(activeProject.title || "skill2income-project").replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.pdf`);
 
   trackEvent("project_pdf_exported", { idea_title: activeProject.title || "" });
 }
