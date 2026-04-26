@@ -311,10 +311,11 @@ a { color:#60a5fa; text-decoration:underline; }
     <h3>Sign In</h3>
     <p style="color:#cbd5e1; margin-bottom:14px;">Choose a sign-in method. No separate password or registration form is needed.</p>
     <div style="display:flex; flex-direction:column; gap:10px;">
-      <button class="project-tab" onclick="loginWithGoogle()">Continue with Google</button>
-      <button class="project-tab" onclick="loginWithMicrosoft()">Continue with Microsoft</button>
-      <button class="project-tab" onclick="loginWithGitHub()">Continue with GitHub</button>
+      <button class="project-tab login-provider-btn" onclick="loginWithGoogle()">Continue with Google</button>
+      <button class="project-tab login-provider-btn" onclick="loginWithMicrosoft()">Continue with Microsoft</button>
+      <button class="project-tab login-provider-btn" onclick="loginWithGitHub()">Continue with GitHub</button>
     </div>
+    <p id="loginStatusMessage" style="color:#94a3b8; font-size:13px; margin:12px 0 0 0;"></p>
     <div class="modal-actions" style="margin-top:14px;">
       <button class="project-tab" onclick="closeLoginModal()">Close</button>
     </div>
@@ -342,6 +343,7 @@ const ticketStatusModal = document.getElementById("ticketStatusModal");
 const myTicketsModal = document.getElementById("myTicketsModal");
 const myTicketsBody = document.getElementById("myTicketsBody");
 const loginModal = document.getElementById("loginModal");
+const loginStatusMessage = document.getElementById("loginStatusMessage");
 
 let currentChatId=null;
 let messages=[];
@@ -352,6 +354,7 @@ let activeProjectTab="overview";
 let activeProjectCollapsed=false;
 let supportTickets=[];
 let compareIdeas=[];
+let loginInProgress=false;
 const analyticsSessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 function getHistoryText(message){
@@ -381,11 +384,24 @@ function closeAllChatMenus(){
 }
 
 function closeLoginModal(){
+  if(loginInProgress) return;
+  loginStatusMessage.textContent = "";
   loginModal.style.display = "none";
 }
 
 function openLoginModal(){
+  loginStatusMessage.textContent = "";
   loginModal.style.display = "flex";
+}
+
+function setLoginLoading(isLoading, message = ""){
+  loginInProgress = isLoading;
+  document.querySelectorAll(".login-provider-btn").forEach(btn => {
+    btn.disabled = isLoading;
+    btn.style.opacity = isLoading ? "0.65" : "1";
+    btn.style.cursor = isLoading ? "not-allowed" : "pointer";
+  });
+  loginStatusMessage.textContent = message;
 }
 
 function isMobileView(){
@@ -434,11 +450,27 @@ function login(){
 }
 
 function loginWithProvider(provider){
-  closeLoginModal();
+  if(loginInProgress) return;
+  setLoginLoading(true, "Opening secure sign-in...");
   auth.signInWithPopup(provider)
     .then(res => console.log("Logged in:", res.user.email))
     .catch(err => {
       console.error("Login error:", err);
+      const code = err?.code || "";
+      if(code === "auth/popup-blocked"){
+        setLoginLoading(true, "Popup was blocked. Redirecting to sign in...");
+        auth.signInWithRedirect(provider);
+        return;
+      }
+      if(code === "auth/cancelled-popup-request"){
+        setLoginLoading(false, "Another sign-in window was already open. Please complete that window or try again once.");
+        return;
+      }
+      if(code === "auth/popup-closed-by-user"){
+        setLoginLoading(false, "Sign-in window was closed before completion.");
+        return;
+      }
+      setLoginLoading(false, "");
       alert(`Login failed: ${err.message || err}`);
     });
 }
@@ -461,7 +493,9 @@ function loginWithGitHub(){
 
 // AUTH
 auth.onAuthStateChanged(user => {
+  setLoginLoading(false, "");
   if (user) {
+    loginModal.style.display = "none";
     loadChatList();
     loadActiveProject();
     loadSupportTickets();
@@ -2001,21 +2035,28 @@ function exportActiveProjectPdf(){
   }
 
   const wrapper = document.createElement("div");
-  wrapper.style.position = "fixed";
-  wrapper.style.left = "-99999px";
+  wrapper.style.position = "absolute";
+  wrapper.style.left = "0";
   wrapper.style.top = "0";
+  wrapper.style.width = "794px";
+  wrapper.style.padding = "0";
   wrapper.style.background = "white";
+  wrapper.style.opacity = "0";
+  wrapper.style.pointerEvents = "none";
+  wrapper.style.zIndex = "-1";
   wrapper.innerHTML = buildProjectExportHtml(activeProject);
   document.body.appendChild(wrapper);
 
-  html2pdf().from(wrapper).set({
-    margin: 10,
-    filename: `${(activeProject.title || "skill2income-project").replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.pdf`,
-    html2canvas: { scale: 2 },
-    jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
-  }).save().finally(() => {
-    wrapper.remove();
-  });
+  setTimeout(() => {
+    html2pdf().from(wrapper).set({
+      margin: 10,
+      filename: `${(activeProject.title || "skill2income-project").replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.pdf`,
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
+    }).save().finally(() => {
+      wrapper.remove();
+    });
+  }, 50);
 
   trackEvent("project_pdf_exported", { idea_title: activeProject.title || "" });
 }
