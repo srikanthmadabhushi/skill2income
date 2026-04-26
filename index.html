@@ -149,6 +149,11 @@ const userInput = document.getElementById("userInput");
 let currentChatId=null;
 let messages=[];
 
+function getHistoryText(message){
+  if (message.historyText) return message.historyText;
+  return (message.text || "").replace(/<[^>]+>/g, "");
+}
+
 // ENTER
 userInput.addEventListener("keypress", e=>{
  if(e.key==="Enter") sendMessage();
@@ -340,7 +345,7 @@ async function sendMessage(){
     time: "2 hours",
     history: messages.map(m => ({
       role: m.role,
-      text: m.text.replace(/<[^>]+>/g, "")
+      text: getHistoryText(m)
     })),
     timestamp: Date.now()
   })
@@ -482,12 +487,19 @@ ${p.personal_reason || "Based on your interests and skills"}
 
   addMessage(html, "ai");
 
-  // ✅ CLEAN HISTORY (IMPORTANT FIX)
   messages.push({
     role: "ai",
-    text: p.title
+    text: html,
+    historyText: p.title
   });
 
+});
+
+messages.push({
+  role: "ai",
+  text: "",
+  historyText: JSON.stringify({ result: resultData }),
+  hidden: true
 });
 
 sendBtn.disabled = false;
@@ -513,6 +525,7 @@ function loadChat(id){
     chat.innerHTML = "";
 
     messages.forEach(m => {
+      if (m.hidden) return;
       addMessage(m.text, m.role);
     });
 
