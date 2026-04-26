@@ -192,9 +192,21 @@ function getLatestTopic(){
   return "";
 }
 
+function closeAllChatMenus(){
+  document.querySelectorAll(".chat-menu").forEach(menu => {
+    menu.style.display = "none";
+  });
+}
+
 // ENTER
 userInput.addEventListener("keypress", e=>{
  if(e.key==="Enter") sendMessage();
+});
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".chat-item")) {
+    closeAllChatMenus();
+  }
 });
 
 // LOGIN
@@ -283,16 +295,17 @@ menu.className = "chat-menu";
 const rename = document.createElement("div");
 rename.innerText = "Rename";
 rename.onclick = () => {
+  closeAllChatMenus();
   const newName = prompt("Enter new name:");
   if(newName) renameChat(doc.id, newName);
-  menu.style.display = "none";
 };
 
     const del = document.createElement("div");
 del.innerText = "Delete";
 del.onclick = () => {
-  deleteChat(doc.id);
-  menu.style.display = "none";
+  closeAllChatMenus();
+  const shouldDelete = confirm("Delete this chat?");
+  if(shouldDelete) deleteChat(doc.id);
 };
 
 menu.appendChild(rename);
@@ -300,12 +313,9 @@ menu.appendChild(del);
 
 btn.onclick = (e) => {
   e.stopPropagation();
-
-  document.querySelectorAll(".chat-menu").forEach(m => {
-    m.style.display = "none";
-  });
-
-  menu.style.display = "block";
+  const willOpen = menu.style.display !== "block";
+  closeAllChatMenus();
+  menu.style.display = willOpen ? "block" : "none";
 };
 
     container.appendChild(title);
@@ -584,7 +594,7 @@ async function runLaunchAgent(){
   trackEvent("launch_agent_run", { idea_title: activeProject.title });
 
   try{
-    const res = await fetch("https://skill2income-api.onrender.com/launch-agent", {
+    let res = await fetch("https://skill2income-api.onrender.com/launch-agent", {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -600,8 +610,27 @@ async function runLaunchAgent(){
     });
 
     if(!res.ok){
+      res = await fetch("https://skill2income-api.onrender.com/generate-income-plan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          request_type: "launch_agent",
+          idea_title: activeProject.title || "",
+          idea_description: activeProject.description || "",
+          interests: activeProject.title || "",
+          history: messages.map(m => ({
+            role: m.role,
+            text: getHistoryText(m)
+          }))
+        })
+      });
+    }
+
+    if(!res.ok){
       removeMessage(loadingId);
-      addMessage("❌ Launch Agent could not finish. Try again.","ai");
+      addMessage(`❌ Launch Agent could not finish. Server returned ${res.status}.`, "ai");
       return;
     }
 
