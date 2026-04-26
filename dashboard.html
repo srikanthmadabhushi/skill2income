@@ -32,6 +32,59 @@ body { font-family:'Inter'; background:#020617; color:white; margin:0; }
   gap:15px;
 }
 
+.page {
+  padding:20px;
+}
+
+.section-title {
+  margin:0 0 12px 0;
+  font-size:22px;
+}
+
+.analytics-grid {
+  display:grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap:15px;
+  margin-bottom:24px;
+}
+
+.stat-card {
+  background:#0f172a;
+  border:1px solid #1e293b;
+  border-radius:12px;
+  padding:16px;
+}
+
+.stat-label {
+  color:#94a3b8;
+  font-size:13px;
+  margin-bottom:8px;
+}
+
+.stat-value {
+  font-size:32px;
+  font-weight:600;
+  color:#38bdf8;
+}
+
+.insights-card {
+  background:#111827;
+  border:1px solid #1f2937;
+  border-radius:12px;
+  padding:16px;
+  margin-bottom:24px;
+}
+
+.insights-card ul {
+  margin:10px 0 0 20px;
+  color:#cbd5e1;
+}
+
+.empty-state {
+  color:#94a3b8;
+  padding:12px 0;
+}
+
 .card {
   background:#111827;
   padding:15px;
@@ -61,7 +114,35 @@ button {
   <button onclick="goBack()">⬅ Back</button>
 </div>
 
-<div id="plans" class="container"></div>
+<div class="page">
+  <h3 class="section-title">Product Analytics</h3>
+  <div class="analytics-grid">
+    <div class="stat-card">
+      <div class="stat-label">Idea Generations</div>
+      <div class="stat-value" id="statGenerateIdeas">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Execution Plan Clicks</div>
+      <div class="stat-value" id="statExecutionPlans">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">AI Coach Uses</div>
+      <div class="stat-value" id="statCoachUses">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">New Chats</div>
+      <div class="stat-value" id="statNewChats">0</div>
+    </div>
+  </div>
+
+  <div class="insights-card">
+    <h3 style="margin-top:0;">Top Selected Ideas</h3>
+    <div id="topIdeas" class="empty-state">No analytics data yet.</div>
+  </div>
+
+  <h3 class="section-title">Saved Plans</h3>
+  <div id="plans" class="container"></div>
+</div>
 
 <script>
 const firebaseConfig = {
@@ -76,11 +157,72 @@ const db = firebase.firestore();
 
 auth.onAuthStateChanged(user=>{
   if(user){
+    loadAnalytics();
     loadPlans();
   } else {
     alert("Login required");
   }
 });
+
+function loadAnalytics(){
+  db.collection("analytics_events")
+  .where("userId", "==", auth.currentUser.uid)
+  .get()
+  .then(snapshot => {
+    const stats = {
+      generate_ideas: 0,
+      execution_plan_clicked: 0,
+      ai_coach_used: 0,
+      new_chat_created: 0
+    };
+
+    const ideaCounts = {};
+
+    snapshot.forEach(doc => {
+      const event = doc.data();
+      const name = event.event;
+      const ideaTitle = event.metadata?.idea_title;
+
+      if (name in stats) {
+        stats[name] += 1;
+      }
+
+      if (name === "select_idea" && ideaTitle) {
+        ideaCounts[ideaTitle] = (ideaCounts[ideaTitle] || 0) + 1;
+      }
+    });
+
+    document.getElementById("statGenerateIdeas").innerText = stats.generate_ideas;
+    document.getElementById("statExecutionPlans").innerText = stats.execution_plan_clicked;
+    document.getElementById("statCoachUses").innerText = stats.ai_coach_used;
+    document.getElementById("statNewChats").innerText = stats.new_chat_created;
+
+    renderTopIdeas(ideaCounts);
+  })
+  .catch(err => {
+    console.error("analytics load error", err);
+    document.getElementById("topIdeas").innerHTML = `<div class="empty-state">Could not load analytics yet.</div>`;
+  });
+}
+
+function renderTopIdeas(ideaCounts){
+  const topIdeas = Object.entries(ideaCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+
+  const container = document.getElementById("topIdeas");
+
+  if (!topIdeas.length) {
+    container.innerHTML = `<div class="empty-state">No idea selections tracked yet.</div>`;
+    return;
+  }
+
+  container.innerHTML = `
+    <ul>
+      ${topIdeas.map(([title, count]) => `<li><b>${title}</b> - selected ${count} time${count === 1 ? "" : "s"}</li>`).join("")}
+    </ul>
+  `;
+}
 
 function loadPlans(){
   db.collection("users").doc(auth.currentUser.uid)
