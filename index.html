@@ -352,6 +352,16 @@ a { color:#60a5fa; text-decoration:underline; }
   </div>
 </div>
 
+<div id="projectsModal" class="modal-backdrop">
+  <div class="modal-card">
+    <h3>My Projects</h3>
+    <div id="projectsBody" style="display:flex; flex-direction:column; gap:10px;"></div>
+    <div class="modal-actions">
+      <button class="project-tab" onclick="closeProjectsModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <div id="loginModal" class="modal-backdrop">
   <div class="modal-card">
     <h3>Sign In</h3>
@@ -388,6 +398,8 @@ const issueModal = document.getElementById("issueModal");
 const ticketStatusModal = document.getElementById("ticketStatusModal");
 const myTicketsModal = document.getElementById("myTicketsModal");
 const myTicketsBody = document.getElementById("myTicketsBody");
+const projectsModal = document.getElementById("projectsModal");
+const projectsBody = document.getElementById("projectsBody");
 const loginModal = document.getElementById("loginModal");
 const loginStatusMessage = document.getElementById("loginStatusMessage");
 const topBarActions = document.getElementById("topBarActions");
@@ -400,10 +412,29 @@ let activeProject=null;
 let activeProjectTab="overview";
 let activeProjectCollapsed=false;
 let supportTickets=[];
+let savedProjects=[];
 let compareIdeas=[];
 let loginInProgress=false;
 let ideaGenerationCount = 0;
+let currentPlan = "free";
+let usageSummary = {};
 const analyticsSessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+const FREE_LIMITS = {
+  idea_generations: 3,
+  validation_toolkit: 1,
+  launch_agent: 1,
+  first_customer_pack: 1,
+  idea_comparison: 1,
+  pdf_export: 1
+};
+const ACTION_LABELS = {
+  idea_generations: "idea generations",
+  validation_toolkit: "Validation Toolkit runs",
+  launch_agent: "Launch Agent runs",
+  first_customer_pack: "First Customer Pack runs",
+  idea_comparison: "idea comparisons",
+  pdf_export: "PDF exports"
+};
 
 function getHistoryText(message){
   if (message.historyText) return message.historyText;
@@ -531,6 +562,112 @@ function closeLoginModal(){
   loginModal.style.display = "none";
 }
 
+function getTodayUsageKey(){
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getTodayUsageDocId(){
+  return `daily_${getTodayUsageKey().replace(/-/g, "_")}`;
+}
+
+function createProjectId(){
+  return `project_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getUsageCount(actionKey){
+  return Number(usageSummary?.[actionKey] || 0);
+}
+
+function getUsageLimit(actionKey){
+  if(currentPlan === "pro") return Infinity;
+  return FREE_LIMITS[actionKey] ?? Infinity;
+}
+
+function getUsageRemaining(actionKey){
+  const limit = getUsageLimit(actionKey);
+  if(!Number.isFinite(limit)) return "Unlimited";
+  return Math.max(limit - getUsageCount(actionKey), 0);
+}
+
+function getPlanBadgeLabel(){
+  return currentPlan === "pro" ? "Pro" : "Free";
+}
+
+function getUsageSnapshotText(){
+  if(currentPlan === "pro"){
+    return "Unlimited ideas, validation, launch, export, and comparison.";
+  }
+  return `Ideas left today: ${getUsageRemaining("idea_generations")} • Validation: ${getUsageRemaining("validation_toolkit")} • Launch: ${getUsageRemaining("launch_agent")}`;
+}
+
+async function loadUserProfile(){
+  if(!auth.currentUser) return;
+  try{
+    const doc = await db.collection("users").doc(auth.currentUser.uid).get();
+    currentPlan = doc.exists && doc.data()?.plan === "pro" ? "pro" : "free";
+    loadChatList();
+  } catch(err){
+    console.error("user profile load error", err);
+  }
+}
+
+async function loadUsageSummary(){
+  if(!auth.currentUser) return;
+  try{
+    const doc = await db.collection("users").doc(auth.currentUser.uid)
+      .collection("usage").doc(getTodayUsageDocId()).get();
+    usageSummary = doc.exists ? doc.data() : {};
+    loadChatList();
+  } catch(err){
+    console.error("usage summary load error", err);
+  }
+}
+
+async function canUseAction(actionKey){
+  if(currentPlan === "pro") return true;
+  const limit = FREE_LIMITS[actionKey];
+  if(!limit) return true;
+
+  const used = getUsageCount(actionKey);
+  if(used < limit) return true;
+
+  const label = ACTION_LABELS[actionKey] || "actions";
+  addMessage(`
+    <div class="upgrade-banner">
+      <h4>Free plan limit reached</h4>
+      <p>You have used today’s ${escapeHtml(label)}. Upgrade to Pro for unlimited workspace actions and exports.</p>
+      <div class="share-row">
+        <button class="share-btn" onclick="goPricing()">View Pro Plan</button>
+      </div>
+    </div>
+  `, "ai");
+  trackEvent("usage_limit_hit", { action: actionKey, plan: currentPlan });
+  return false;
+}
+
+async function recordUsage(actionKey){
+  if(currentPlan === "pro" || !auth.currentUser) return;
+  usageSummary[actionKey] = getUsageCount(actionKey) + 1;
+  usageSummary.dateKey = getTodayUsageKey();
+  loadChatList();
+  try{
+    await db.collection("users").doc(auth.currentUser.uid)
+      .collection("usage").doc(getTodayUsageDocId())
+      .set({
+        dateKey: getTodayUsageKey(),
+        [actionKey]: firebase.firestore.FieldValue.increment(1),
+        updatedAt: new Date()
+      }, { merge: true });
+    loadUsageSummary();
+  } catch(err){
+    console.error("usage record error", err);
+  }
+}
+
 function openLoginModal(){
   loginStatusMessage.textContent = "";
   loginModal.style.display = "flex";
@@ -640,15 +777,21 @@ auth.onAuthStateChanged(user => {
   if (user) {
     loginModal.style.display = "none";
     renderSignedInEmptyState();
+    loadUserProfile();
+    loadUsageSummary();
     loadChatList();
+    loadProjects();
     loadActiveProject();
     loadSupportTickets();
   } else {
     activeProject = null;
     supportTickets = [];
+    savedProjects = [];
     compareIdeas = [];
     messages = [];
     currentPlans = [];
+    usageSummary = {};
+    currentPlan = "free";
     renderActiveProjectPanel();
     renderGuestSidebar();
     renderGuestLanding();
@@ -688,6 +831,7 @@ function loadChatList(){
 
   sidebar.innerHTML = `
   <button onclick="newChat()">➕ New Chat</button>
+  <button onclick="openProjectsModal()">📁 My Projects (${savedProjects.length})</button>
   <button onclick="goDashboard()">📊 Saved Plans</button>
   <button onclick="openTicketStatusModal()">🎫 Check Ticket Status</button>
   <button onclick="openMyTicketsModal()">🧾 My Tickets (${supportTickets.length})</button>
@@ -696,6 +840,11 @@ function loadChatList(){
   <button id="logoutBtn" onclick="logout()">🚪 Logout</button>
 
   <p style="font-size:12px;color:#94a3b8;">${auth.currentUser.email}</p>
+  <div style="margin:10px 0 14px 0; padding:10px; background:#111827; border:1px solid #334155; border-radius:10px;">
+    <div style="font-size:12px; color:#93c5fd; font-weight:700; margin-bottom:6px;">${getPlanBadgeLabel()} Plan</div>
+    <div style="font-size:12px; color:#cbd5e1; line-height:1.5;">${getUsageSnapshotText()}</div>
+    ${currentPlan !== "pro" ? `<button onclick="showUpgrade()" style="margin-top:10px; width:100%; padding:8px 10px; border:none; border-radius:8px; background:#22c55e; color:#04130b; font-weight:700; cursor:pointer;">Upgrade to Pro</button>` : ""}
+  </div>
 
   <hr>
 `;
@@ -902,6 +1051,122 @@ function loadSupportTickets(){
     .catch(err => {
       console.error("support tickets load error", err);
     });
+}
+
+function closeProjectsModal(){
+  projectsModal.style.display = "none";
+}
+
+function openProjectsModal(){
+  closeMobileSidebar();
+  renderProjectsModal();
+  projectsModal.style.display = "flex";
+}
+
+function renderProjectsModal(){
+  const items = [...savedProjects].sort((a, b) => {
+    const aTime = new Date(a.updatedAt || a.createdAt || 0).getTime();
+    const bTime = new Date(b.updatedAt || b.createdAt || 0).getTime();
+    return bTime - aTime;
+  });
+
+  if(!items.length){
+    projectsBody.innerHTML = `<div class="project-empty">No saved projects yet. Set an Active Project from an idea card and it will appear here.</div>`;
+    return;
+  }
+
+  projectsBody.innerHTML = items.map(project => {
+    const progressDone = getProjectChecklist().filter(item => project.progress?.[item.key]).length;
+    return `
+      <div style="background:#111827; border:1px solid #334155; border-radius:12px; padding:12px;">
+        <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+          <div>
+            <div style="color:#f8fafc; font-weight:700;">${escapeHtml(project.title || "Untitled project")}</div>
+            <div style="color:#94a3b8; font-size:12px; margin-top:4px;">Updated ${escapeHtml(formatDisplayDate(project.updatedAt || project.createdAt))}</div>
+            <div style="color:#38bdf8; font-size:12px; margin-top:6px;">${progressDone}/${getProjectChecklist().length} milestones completed</div>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+            <button class="project-tab" onclick="openProjectFromLibrary('${project.projectId}')">Open</button>
+            <button class="project-tab" onclick="archiveProject('${project.projectId}')">Archive</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function loadProjects(){
+  if(!auth.currentUser) return;
+  db.collection("users").doc(auth.currentUser.uid)
+    .collection("projects")
+    .orderBy("updatedAt", "desc")
+    .get()
+    .then(snapshot => {
+      savedProjects = snapshot.docs
+        .map(doc => ({ projectId: doc.id, ...doc.data() }))
+        .filter(project => !project.archived);
+      renderProjectsModal();
+      loadChatList();
+    })
+    .catch(err => {
+      console.error("projects load error", err);
+    });
+}
+
+function persistProjectLibraryEntry(project){
+  if(!auth.currentUser || !project) return Promise.resolve();
+  if(!project.projectId){
+    project.projectId = createProjectId();
+  }
+  return db.collection("users").doc(auth.currentUser.uid)
+    .collection("projects").doc(project.projectId)
+    .set({
+      ...project,
+      archived: !!project.archived,
+      createdAt: project.createdAt || new Date(),
+      updatedAt: new Date()
+    }, { merge: true })
+    .then(() => loadProjects());
+}
+
+function openProjectFromLibrary(projectId){
+  const project = savedProjects.find(item => item.projectId === projectId);
+  if(!project) return;
+
+  activeProject = {
+    ...project,
+    projectId
+  };
+  activeProjectTab = "overview";
+  activeProjectCollapsed = false;
+  selectedCoachIdea = null;
+  renderActiveProjectPanel();
+  saveActiveProjectToStore(activeProject);
+  closeProjectsModal();
+  trackEvent("project_opened_from_library", { project_id: projectId, idea_title: project.title || "" });
+}
+
+function archiveProject(projectId){
+  const project = savedProjects.find(item => item.projectId === projectId);
+  if(!project || !auth.currentUser) return;
+  const shouldArchive = confirm(`Archive "${project.title || "this project"}"?`);
+  if(!shouldArchive) return;
+
+  db.collection("users").doc(auth.currentUser.uid)
+    .collection("projects").doc(projectId)
+    .set({
+      archived: true,
+      updatedAt: new Date()
+    }, { merge: true })
+    .then(() => {
+      if(activeProject?.projectId === projectId){
+        clearActiveProject();
+      }
+      loadProjects();
+      renderProjectsModal();
+      trackEvent("project_archived", { project_id: projectId, idea_title: project.title || "" });
+    })
+    .catch(err => console.error("project archive error", err));
 }
 
 function saveSupportTicket(ticket){
@@ -1243,12 +1508,16 @@ function expandActiveProject(){
 
 function saveActiveProjectToStore(project){
   if(!auth.currentUser) return Promise.resolve();
+  if(project && !project.projectId){
+    project.projectId = createProjectId();
+  }
   return db.collection("users").doc(auth.currentUser.uid)
     .collection("workspace").doc("current_project")
     .set({
       ...project,
       updatedAt: new Date()
-    }, { merge: true });
+    }, { merge: true })
+    .then(() => persistProjectLibraryEntry(project));
 }
 
 function loadActiveProject(){
@@ -1258,6 +1527,10 @@ function loadActiveProject(){
     .get()
     .then(doc => {
       activeProject = doc.exists ? doc.data() : null;
+      if(activeProject && !activeProject.projectId){
+        activeProject.projectId = createProjectId();
+        saveActiveProjectToStore(activeProject);
+      }
       renderActiveProjectPanel();
     })
     .catch(err => {
@@ -1271,6 +1544,7 @@ function setActiveProject(index){
   if(!idea || !auth.currentUser) return;
 
   activeProject = {
+    projectId: createProjectId(),
     title: idea.title || "",
     description: idea.description || "",
     who_is_this_for: idea.who_is_this_for || "",
@@ -1347,6 +1621,7 @@ function clearActiveProject(){
 
 async function runLaunchAgent(){
   if(!activeProject) return;
+  if(!(await canUseAction("launch_agent"))) return;
 
   collapseProjectForResult();
   const loadingId = addMessage(`⏳ Launch Agent is building assets for <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
@@ -1414,6 +1689,7 @@ async function runLaunchAgent(){
       historyText: JSON.stringify({ launch_agent_for: activeProject.title, result: plan })
     });
     saveChat();
+    recordUsage("launch_agent");
   } catch(err){
     removeMessage(loadingId);
     addMessage(`❌ Error: ${err.message || err}`, "ai");
@@ -1422,6 +1698,7 @@ async function runLaunchAgent(){
 
 async function runValidationToolkit(){
   if(!activeProject) return;
+  if(!(await canUseAction("validation_toolkit"))) return;
 
   collapseProjectForResult();
   const loadingId = addMessage(`⏳ Validation Toolkit is analyzing <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
@@ -1497,6 +1774,7 @@ async function runValidationToolkit(){
       historyText: JSON.stringify({ validation_toolkit_for: activeProject.title, result: toolkit })
     });
     saveChat();
+    recordUsage("validation_toolkit");
     trackEvent("validation_toolkit_succeeded", { idea_title: activeProject.title, score: toolkit?.validation_score?.score || "" });
   } catch(err){
     removeMessage(loadingId);
@@ -1508,6 +1786,7 @@ async function runValidationToolkit(){
 
 async function runFirstCustomerPack(){
   if(!activeProject) return;
+  if(!(await canUseAction("first_customer_pack"))) return;
 
   collapseProjectForResult();
   const loadingId = addMessage(`⏳ First Customer Pack is preparing outreach assets for <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
@@ -1583,6 +1862,7 @@ async function runFirstCustomerPack(){
       historyText: JSON.stringify({ first_customer_pack_for: activeProject.title, result: pack })
     });
     saveChat();
+    recordUsage("first_customer_pack");
     trackEvent("first_customer_pack_succeeded", { idea_title: activeProject.title });
   } catch(err){
     removeMessage(loadingId);
@@ -1842,6 +2122,12 @@ async function sendMessage(){
     return;
   }
 
+  const requestType = isPlanPrompt(text) ? "plan" : "ideas";
+  if(requestType === "ideas" && !(await canUseAction("idea_generations"))){
+    sendBtn.disabled = false;
+    return;
+  }
+
   if(!currentChatId) await newChat();
 
   if(selectedCoachIdea){
@@ -1867,8 +2153,8 @@ async function sendMessage(){
   body: JSON.stringify({
     skills: extractSkill(text),
     interests: text,
-    request_type: isPlanPrompt(text) ? "plan" : "ideas",
-    plan_focus: isPlanPrompt(text) ? getLatestTopic() : "",
+    request_type: requestType,
+    plan_focus: requestType === "plan" ? getLatestTopic() : "",
     time: "2 hours",
     history: messages.map(m => ({
       role: m.role,
@@ -2053,6 +2339,7 @@ messages.push({
 });
 
 sendBtn.disabled = false;
+recordUsage("idea_generations");
 saveChat();
 
 } catch(err){
@@ -2149,6 +2436,7 @@ async function runIdeaComparison(){
     alert("Select at least 2 ideas first using Add to Compare.");
     return;
   }
+  if(!(await canUseAction("idea_comparison"))) return;
 
   closeMobileSidebar();
   const loadingId = addMessage(`⏳ Comparing ${compareIdeas.length} ideas to help you pick the best one...`, "ai");
@@ -2211,6 +2499,7 @@ async function runIdeaComparison(){
       historyText: JSON.stringify({ idea_comparison: compareIdeas.map(item => item.title), result: comparison })
     });
     saveChat();
+    recordUsage("idea_comparison");
     compareIdeas = [];
     loadChatList();
     trackEvent("idea_comparison_succeeded", { winner: comparison?.winner_title || "" });
@@ -2282,6 +2571,11 @@ function buildProjectExportHtml(project){
 function exportActiveProjectPdf(){
   if(!activeProject){
     alert("Set an Active Project first.");
+    return;
+  }
+
+  if(currentPlan !== "pro" && getUsageCount("pdf_export") >= getUsageLimit("pdf_export")){
+    canUseAction("pdf_export");
     return;
   }
 
@@ -2395,6 +2689,7 @@ function exportActiveProjectPdf(){
     }
 
     doc.save(`${(activeProject.title || "skill2income-project").replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.pdf`);
+    recordUsage("pdf_export");
   } else if(window.html2pdf){
     const wrapper = document.createElement("div");
     wrapper.style.position = "fixed";
@@ -2422,6 +2717,7 @@ function exportActiveProjectPdf(){
         jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
       }).save().finally(() => {
         wrapper.remove();
+        recordUsage("pdf_export");
       });
     }, 120);
   } else {
