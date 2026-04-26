@@ -169,6 +169,7 @@ let currentPlans=[];
 let selectedCoachIdea=null;
 let activeProject=null;
 let activeProjectTab="overview";
+let activeProjectCollapsed=false;
 const analyticsSessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 function getHistoryText(message){
@@ -395,6 +396,20 @@ function renderActiveProjectPanel(){
   const checklist = getProjectChecklist();
   const progressDone = checklist.filter(item => activeProject.progress?.[item.key]).length;
   const assets = buildProjectAssets(activeProject);
+  if(activeProjectCollapsed){
+    activeProjectMount.innerHTML = `
+      <div class="active-project-card">
+        <div class="project-header">
+          <div>
+            <p class="project-subtitle">Active Project</p>
+            <h3 class="project-title">${escapeHtml(activeProject.title || "Untitled idea")}</h3>
+          </div>
+          <button class="project-tab" onclick="expandActiveProject()">Open Workspace</button>
+        </div>
+      </div>
+    `;
+    return;
+  }
   let contentHtml = "";
 
   if(activeProjectTab === "overview"){
@@ -440,7 +455,8 @@ function renderActiveProjectPanel(){
       </div>
       <div class="project-actions">
         <button class="project-tab" onclick="continueActiveCoach()">Continue with AI Coach</button>
-        <button class="project-tab" onclick="setInputValue(activeProject.title || '')">Reuse in Chat</button>
+        <button class="project-tab" onclick="runLaunchAgent()">Run Launch Agent</button>
+        <button class="project-tab" onclick="reuseActiveProjectInChat()">Reuse in Chat</button>
         <button class="project-tab" onclick="clearActiveProject()">Clear Project</button>
       </div>
       <div class="project-tabs">
@@ -455,6 +471,16 @@ function renderActiveProjectPanel(){
 
 function switchProjectTab(tab){
   activeProjectTab = tab;
+  renderActiveProjectPanel();
+}
+
+function collapseActiveProject(){
+  activeProjectCollapsed = true;
+  renderActiveProjectPanel();
+}
+
+function expandActiveProject(){
+  activeProjectCollapsed = false;
   renderActiveProjectPanel();
 }
 
@@ -505,6 +531,7 @@ function setActiveProject(index){
   };
 
   activeProjectTab = "overview";
+  activeProjectCollapsed = false;
   renderActiveProjectPanel();
   saveActiveProjectToStore(activeProject);
   trackEvent("active_project_set", { idea_title: idea.title });
@@ -526,7 +553,14 @@ function continueActiveCoach(){
     description: activeProject.description || ""
   };
   trackEvent("active_project_continue_coach", { idea_title: activeProject.title });
+  collapseActiveProject();
   setInputValue(`Help me move forward with ${activeProject.title}`);
+}
+
+function reuseActiveProjectInChat(){
+  if(!activeProject) return;
+  collapseActiveProject();
+  setInputValue(activeProject.title || "");
 }
 
 function clearActiveProject(){
@@ -534,12 +568,64 @@ function clearActiveProject(){
   const title = activeProject?.title || null;
   activeProject = null;
   selectedCoachIdea = null;
+  activeProjectCollapsed = false;
   renderActiveProjectPanel();
   db.collection("users").doc(auth.currentUser.uid)
     .collection("workspace").doc("current_project")
     .delete()
     .catch(err => console.error("clear active project error", err));
   trackEvent("active_project_cleared", { idea_title: title });
+}
+
+async function runLaunchAgent(){
+  if(!activeProject) return;
+
+  const loadingId = addMessage(`⏳ Launch Agent is building assets for <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
+  trackEvent("launch_agent_run", { idea_title: activeProject.title });
+
+  try{
+    const res = await fetch("https://skill2income-api.onrender.com/launch-agent", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        idea_title: activeProject.title || "",
+        idea_description: activeProject.description || "",
+        history: messages.map(m => ({
+          role: m.role,
+          text: getHistoryText(m)
+        }))
+      })
+    });
+
+    if(!res.ok){
+      removeMessage(loadingId);
+      addMessage("❌ Launch Agent could not finish. Try again.","ai");
+      return;
+    }
+
+    const data = await res.json();
+    const plan = data?.result;
+    if(!plan || Array.isArray(plan)){
+      removeMessage(loadingId);
+      addMessage("⚠️ Launch Agent response format not supported.","ai");
+      return;
+    }
+
+    removeMessage(loadingId);
+    const html = renderLaunchAgent(plan, activeProject.title || "Launch Agent");
+    addMessage(html, "ai");
+    messages.push({
+      role: "ai",
+      text: html,
+      historyText: JSON.stringify({ launch_agent_for: activeProject.title, result: plan })
+    });
+    saveChat();
+  } catch(err){
+    removeMessage(loadingId);
+    addMessage(`❌ Error: ${err.message || err}`, "ai");
+  }
 }
 
 // QUICK FILL
@@ -1175,6 +1261,32 @@ function renderCoachReply(coach, ideaTitle){
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         ${replies.map(reply => `<button onclick="setInputValue('${escapeHtml(reply)}')" style="padding:8px 10px; border:none; border-radius:20px; background:#166534; color:white; cursor:pointer;">${escapeHtml(reply)}</button>`).join("")}
       </div>
+    </div>
+  `;
+}
+
+function renderLaunchAgent(plan, ideaTitle){
+  const launchDays = Array.isArray(plan.seven_day_plan) ? plan.seven_day_plan : [];
+  const landing = plan.landing_page_copy || {};
+
+  return `
+    <div style="margin-bottom:15px; padding:15px; background:#0b1220; border:2px solid #f59e0b; border-radius:12px;">
+      <div style="color:#f59e0b; font-weight:bold; margin-bottom:8px;">Launch Agent</div>
+      <h3 style="color:#fef08a;">${escapeHtml(ideaTitle)}</h3>
+      <p><b>Niche:</b><br>${escapeHtml(plan.niche || "")}</p>
+      <p><b>First Offer:</b><br>${escapeHtml(plan.first_offer || "")}</p>
+      <p><b>Landing Page Copy:</b></p>
+      <ul>
+        <li><b>Headline:</b> ${escapeHtml(landing.headline || "")}</li>
+        <li><b>Subheadline:</b> ${escapeHtml(landing.subheadline || "")}</li>
+        <li><b>CTA:</b> ${escapeHtml(landing.cta || "")}</li>
+      </ul>
+      <p><b>Outreach Message:</b></p>
+      <div style="background:#111827; border:1px solid #1f2937; border-radius:10px; padding:10px; color:#e5e7eb;">${escapeHtml(plan.outreach_message || "")}</div>
+      <p style="margin-top:12px;"><b>7-Day Launch Plan:</b></p>
+      <ol>
+        ${launchDays.map(day => `<li>${escapeHtml(day)}</li>`).join("")}
+      </ol>
     </div>
   `;
 }
