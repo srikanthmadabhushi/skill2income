@@ -177,6 +177,18 @@ a { color:#60a5fa; text-decoration:underline; }
   </div>
 </div>
 
+<div id="ticketStatusModal" class="modal-backdrop">
+  <div class="modal-card">
+    <h3>Check Ticket Status</h3>
+    <label class="modal-label" for="ticketStatusNumber">Ticket Number</label>
+    <input id="ticketStatusNumber" placeholder="Example: INC0010086">
+    <div class="modal-actions">
+      <button class="project-tab" onclick="closeTicketStatusModal()">Cancel</button>
+      <button class="project-tab" onclick="submitTicketStatusCheck()">Check Status</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const firebaseConfig = {
   apiKey:"AIzaSyBUdYVcFTTm2DlmKZJG9_t6Vdu2_P3MuIg",
@@ -193,6 +205,7 @@ const sidebar = document.getElementById("sidebar");
 const userInput = document.getElementById("userInput");
 const activeProjectMount = document.getElementById("activeProjectMount");
 const issueModal = document.getElementById("issueModal");
+const ticketStatusModal = document.getElementById("ticketStatusModal");
 
 let currentChatId=null;
 let messages=[];
@@ -297,6 +310,7 @@ function loadChatList(){
   <button onclick="newChat()">➕ New Chat</button>
   <button onclick="goDashboard()">📊 Saved Plans</button>
   <button onclick="openIssueModal()">🛠 Report Issue</button>
+  <button onclick="openTicketStatusModal()">🎫 Check Ticket Status</button>
 
   <button id="logoutBtn" onclick="logout()">🚪 Logout</button>
 
@@ -394,6 +408,14 @@ function openIssueModal(){
 
 function closeIssueModal(){
   issueModal.style.display = "none";
+}
+
+function openTicketStatusModal(){
+  ticketStatusModal.style.display = "flex";
+}
+
+function closeTicketStatusModal(){
+  ticketStatusModal.style.display = "none";
 }
 
 function getFriendlyServiceNowError(errorText){
@@ -901,6 +923,57 @@ async function submitIssueReport(){
     const errorText = getFriendlyServiceNowError(err.message || String(err));
     addMessage(`❌ Issue could not be created: ${escapeHtml(errorText)}`, "ai");
     trackEvent("servicenow_issue_failed", { title, error: errorText });
+  }
+}
+
+async function submitTicketStatusCheck(){
+  const ticketNumber = document.getElementById("ticketStatusNumber").value.trim().toUpperCase();
+
+  if(!ticketNumber){
+    alert("Please enter a ticket number.");
+    return;
+  }
+
+  closeTicketStatusModal();
+  const loadingId = addMessage(`⏳ Checking status for <b>${escapeHtml(ticketNumber)}</b>...`, "ai");
+  trackEvent("servicenow_status_started", { ticket_number: ticketNumber });
+
+  try{
+    const res = await fetch("https://skill2income-api.onrender.com/servicenow/ticket-status", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        table_name: "incident",
+        ticket_number: ticketNumber
+      })
+    });
+
+    const data = await res.json();
+    removeMessage(loadingId);
+
+    if(!res.ok || data?.error){
+      const errorText = getFriendlyServiceNowError(data?.error || `Server returned ${res.status}`);
+      addMessage(`❌ Could not check ticket status: ${escapeHtml(errorText)}`, "ai");
+      trackEvent("servicenow_status_failed", { ticket_number: ticketNumber, error: errorText });
+      return;
+    }
+
+    const html = renderTicketStatusResult(data.result || {}, ticketNumber);
+    addMessage(html, "ai");
+    messages.push({
+      role: "ai",
+      text: html,
+      historyText: JSON.stringify({ servicenow_status_ticket: ticketNumber, result: data.result })
+    });
+    saveChat();
+    trackEvent("servicenow_status_succeeded", { ticket_number: ticketNumber, status: data?.result?.status || "" });
+  } catch(err){
+    removeMessage(loadingId);
+    const errorText = getFriendlyServiceNowError(err.message || String(err));
+    addMessage(`❌ Could not check ticket status: ${escapeHtml(errorText)}`, "ai");
+    trackEvent("servicenow_status_failed", { ticket_number: ticketNumber, error: errorText });
   }
 }
 
@@ -1648,6 +1721,20 @@ function renderIssueResult(result, issueTitle){
       <p><b>Table:</b> ${escapeHtml(result?.table || "incident")}</p>
       <p><b>Status:</b> ${escapeHtml(result?.status || "Submitted")}</p>
       <p style="color:#fdba74;"><b>Support note:</b> This ticket is stored in our internal ServiceNow system. Users do not need a ServiceNow login to submit or track support through this app.</p>
+    </div>
+  `;
+}
+
+function renderTicketStatusResult(result, ticketNumber){
+  return `
+    <div style="margin-bottom:15px; padding:15px; background:#111827; border:2px solid #60a5fa; border-radius:12px;">
+      <div style="color:#60a5fa; font-weight:bold; margin-bottom:8px;">Ticket Status</div>
+      <h3 style="color:#bfdbfe;">${escapeHtml(result?.number || ticketNumber)}</h3>
+      <p><b>Status:</b> ${escapeHtml(result?.status || "Unknown")}</p>
+      <p><b>Title:</b><br>${escapeHtml(result?.display || "No title available")}</p>
+      <p><b>Priority:</b> ${escapeHtml(result?.priority || "Not set")}</p>
+      <p><b>Created:</b> ${escapeHtml(result?.created_at || "Unknown")}</p>
+      <p><b>Last Updated:</b> ${escapeHtml(result?.updated_at || "Unknown")}</p>
     </div>
   `;
 }
