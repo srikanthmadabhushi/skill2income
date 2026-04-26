@@ -294,6 +294,16 @@ a { color:#60a5fa; text-decoration:underline; }
   </div>
 </div>
 
+<div id="myTicketsModal" class="modal-backdrop">
+  <div class="modal-card">
+    <h3>My Tickets</h3>
+    <div id="myTicketsBody" style="display:flex; flex-direction:column; gap:10px;"></div>
+    <div class="modal-actions">
+      <button class="project-tab" onclick="closeMyTicketsModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const firebaseConfig = {
   apiKey:"AIzaSyBUdYVcFTTm2DlmKZJG9_t6Vdu2_P3MuIg",
@@ -312,6 +322,8 @@ const userInput = document.getElementById("userInput");
 const activeProjectMount = document.getElementById("activeProjectMount");
 const issueModal = document.getElementById("issueModal");
 const ticketStatusModal = document.getElementById("ticketStatusModal");
+const myTicketsModal = document.getElementById("myTicketsModal");
+const myTicketsBody = document.getElementById("myTicketsBody");
 
 let currentChatId=null;
 let messages=[];
@@ -320,6 +332,8 @@ let selectedCoachIdea=null;
 let activeProject=null;
 let activeProjectTab="overview";
 let activeProjectCollapsed=false;
+let supportTickets=[];
+let compareIdeas=[];
 const analyticsSessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 function getHistoryText(message){
@@ -401,8 +415,11 @@ auth.onAuthStateChanged(user => {
   if (user) {
     loadChatList();
     loadActiveProject();
+    loadSupportTickets();
   } else {
     activeProject = null;
+    supportTickets = [];
+    compareIdeas = [];
     renderActiveProjectPanel();
     sidebar.innerHTML = `
       <button id="loginBtn" onclick="login()">🔐 Login</button>
@@ -446,6 +463,8 @@ function loadChatList(){
   <button onclick="goDashboard()">📊 Saved Plans</button>
   <button onclick="openIssueModal()">🛠 Report Issue</button>
   <button onclick="openTicketStatusModal()">🎫 Check Ticket Status</button>
+  <button onclick="openMyTicketsModal()">🧾 My Tickets (${supportTickets.length})</button>
+  <button onclick="runIdeaComparison()">⚖️ Compare Selected Ideas (${compareIdeas.length})</button>
 
   <button id="logoutBtn" onclick="logout()">🚪 Logout</button>
 
@@ -563,6 +582,162 @@ function getFriendlyServiceNowError(errorText){
   return text;
 }
 
+function formatDisplayDate(value){
+  if(!value) return "Unknown";
+  const date = value?.toDate ? value.toDate() : new Date(value);
+  if(Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
+}
+
+function closeMyTicketsModal(){
+  myTicketsModal.style.display = "none";
+}
+
+function openMyTicketsModal(){
+  closeMobileSidebar();
+  renderMyTicketsModal();
+  myTicketsModal.style.display = "flex";
+}
+
+function renderMyTicketsModal(){
+  const items = [...supportTickets].sort((a, b) => {
+    const aTime = new Date(a.lastCheckedAt || a.createdAt || 0).getTime();
+    const bTime = new Date(b.lastCheckedAt || b.createdAt || 0).getTime();
+    return bTime - aTime;
+  });
+
+  if(!items.length){
+    myTicketsBody.innerHTML = `<div class="project-empty">No tickets yet. Raise an issue or push a project to ServiceNow and it will appear here.</div>`;
+    return;
+  }
+
+  myTicketsBody.innerHTML = items.map(ticket => `
+    <div style="background:#111827; border:1px solid #334155; border-radius:12px; padding:12px;">
+      <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start; flex-wrap:wrap;">
+        <div>
+          <div style="color:#93c5fd; font-weight:700;">${escapeHtml(ticket.number || "Ticket")}</div>
+          <div style="color:#e5e7eb; margin-top:4px;">${escapeHtml(ticket.display || ticket.title || "No title available")}</div>
+          <div style="color:#94a3b8; font-size:12px; margin-top:6px;">Status: ${escapeHtml(ticket.status || "Submitted")} | Source: ${escapeHtml(ticket.source || "support")}</div>
+          <div style="color:#94a3b8; font-size:12px;">Updated: ${escapeHtml(formatDisplayDate(ticket.lastCheckedAt || ticket.updated_at || ticket.createdAt || ticket.created_at))}</div>
+        </div>
+        <button class="project-tab" onclick="checkStoredTicketStatus('${escapeHtml(ticket.number || "")}')">Refresh Status</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function checkStoredTicketStatus(ticketNumber){
+  closeMyTicketsModal();
+  document.getElementById("ticketStatusNumber").value = ticketNumber || "";
+  submitTicketStatusCheck();
+}
+
+function loadSupportTickets(){
+  if(!auth.currentUser) return;
+  db.collection("users").doc(auth.currentUser.uid)
+    .collection("support_tickets")
+    .orderBy("updatedAt", "desc")
+    .get()
+    .then(snapshot => {
+      supportTickets = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      renderMyTicketsModal();
+      loadChatList();
+    })
+    .catch(err => {
+      console.error("support tickets load error", err);
+    });
+}
+
+function saveSupportTicket(ticket){
+  if(!auth.currentUser || !ticket?.number) return Promise.resolve();
+  const docId = String(ticket.number).trim();
+  const existing = supportTickets.find(item => item.number === docId) || {};
+  const payload = {
+    ...existing,
+    ...ticket,
+    number: docId,
+    updatedAt: new Date().toISOString()
+  };
+
+  supportTickets = [payload, ...supportTickets.filter(item => item.number !== docId)];
+  renderMyTicketsModal();
+  loadChatList();
+
+  return db.collection("users").doc(auth.currentUser.uid)
+    .collection("support_tickets").doc(docId)
+    .set(payload, { merge: true })
+    .catch(err => console.error("support ticket save error", err));
+}
+
+function ensureActiveProjectTimeline(){
+  if(!activeProject) return [];
+  activeProject.timeline = Array.isArray(activeProject.timeline) ? activeProject.timeline : [];
+  return activeProject.timeline;
+}
+
+function appendActiveProjectTimeline(type, title, details = {}){
+  if(!activeProject) return;
+  const timeline = ensureActiveProjectTimeline();
+  timeline.unshift({
+    type,
+    title,
+    details,
+    createdAt: new Date().toISOString()
+  });
+  activeProject.timeline = timeline.slice(0, 25);
+  saveActiveProjectToStore(activeProject);
+  renderActiveProjectPanel();
+}
+
+function getProjectTickets(project){
+  if(!project) return [];
+  const linkedNumbers = Array.isArray(project.support_tickets) ? project.support_tickets : [];
+  return supportTickets.filter(ticket =>
+    linkedNumbers.includes(ticket.number) ||
+    (project.title && ticket.project_title === project.title)
+  );
+}
+
+function linkTicketToActiveProject(ticket){
+  if(!activeProject || !ticket?.number) return;
+  activeProject.support_tickets = Array.isArray(activeProject.support_tickets) ? activeProject.support_tickets : [];
+  if(!activeProject.support_tickets.includes(ticket.number)){
+    activeProject.support_tickets.push(ticket.number);
+  }
+  saveActiveProjectToStore(activeProject);
+  renderActiveProjectPanel();
+}
+
+function renderProjectTimeline(project){
+  const timeline = Array.isArray(project?.timeline) ? project.timeline : [];
+  const linkedTickets = getProjectTickets(project);
+
+  return `
+    <div style="display:flex; flex-direction:column; gap:12px;">
+      <div>
+        <p><b>Project timeline</b></p>
+        ${timeline.length ? timeline.map(item => `
+          <div style="background:#111827; border:1px solid #1f2937; border-radius:10px; padding:10px; margin-bottom:8px;">
+            <div style="color:#93c5fd; font-weight:600;">${escapeHtml(item.title || item.type || "Update")}</div>
+            <div style="color:#94a3b8; font-size:12px; margin-top:4px;">${escapeHtml(formatDisplayDate(item.createdAt))}</div>
+            ${item.details?.summary ? `<div style="margin-top:6px; color:#e5e7eb;">${escapeHtml(item.details.summary)}</div>` : ""}
+          </div>
+        `).join("") : `<div class="project-empty">No timeline activity yet. Run the toolkit, launch agent, or support flow to populate it.</div>`}
+      </div>
+      <div>
+        <p><b>Related tickets</b></p>
+        ${linkedTickets.length ? linkedTickets.map(ticket => `
+          <div style="background:#0f172a; border:1px solid #334155; border-radius:10px; padding:10px; margin-bottom:8px;">
+            <div style="color:#f8fafc; font-weight:600;">${escapeHtml(ticket.number || "Ticket")}</div>
+            <div style="color:#cbd5e1; margin-top:4px;">${escapeHtml(ticket.display || ticket.title || "No title available")}</div>
+            <div style="color:#94a3b8; font-size:12px; margin-top:6px;">Status: ${escapeHtml(ticket.status || "Submitted")} | Updated: ${escapeHtml(formatDisplayDate(ticket.lastCheckedAt || ticket.updatedAt || ticket.created_at))}</div>
+          </div>
+        `).join("") : `<div class="project-empty">No tickets linked to this project yet.</div>`}
+      </div>
+    </div>
+  `;
+}
+
 function trackEvent(eventName, metadata = {}){
   const payload = {
     event: eventName,
@@ -585,6 +760,7 @@ function getProjectChecklist(){
     { key: "idea_selected", label: "Idea selected" },
     { key: "validation_completed", label: "Validation toolkit completed" },
     { key: "execution_plan_opened", label: "Execution plan opened" },
+    { key: "first_customer_pack_ready", label: "First customer pack generated" },
     { key: "first_offer_written", label: "First offer written" },
     { key: "first_outreach_sent", label: "First outreach sent" },
     { key: "first_customer_contacted", label: "First customer contacted" }
@@ -594,10 +770,14 @@ function getProjectChecklist(){
 function buildProjectAssets(project){
   const title = project?.title || "your idea";
   const audience = project?.who_is_this_for || "a narrow niche customer";
+  const customerPack = project?.first_customer_pack || {};
+  const landingProofPoints = Array.isArray(customerPack?.landing_page_copy?.proof_points)
+    ? customerPack.landing_page_copy.proof_points.join("\n- ")
+    : "";
   return {
-    outreach: `Hi [Name], I am building ${title} for ${audience}. I noticed teams like yours often struggle with [specific pain point]. Would you be open to a 15-minute chat so I can show a simple version and get feedback?`,
-    landing: `Headline: Launch ${title} faster\nSubheadline: A focused solution for ${audience} who need a better way to handle this workflow.\nCTA: Book an early access demo`,
-    offer: `First offer: I will set up the first version of ${title} for one niche customer, with onboarding support and a feedback loop, in exchange for an early pilot fee.`
+    outreach: customerPack.cold_email || `Hi [Name], I am building ${title} for ${audience}. I noticed teams like yours often struggle with [specific pain point]. Would you be open to a 15-minute chat so I can show a simple version and get feedback?`,
+    landing: customerPack.landing_page_copy ? `Headline: ${customerPack.landing_page_copy.headline || ""}\nSubheadline: ${customerPack.landing_page_copy.subheadline || ""}\nProof points:\n- ${landingProofPoints}\nCTA: ${customerPack.call_to_action || "Book an early access demo"}` : `Headline: Launch ${title} faster\nSubheadline: A focused solution for ${audience} who need a better way to handle this workflow.\nCTA: Book an early access demo`,
+    offer: customerPack.pricing_offer ? `Package: ${customerPack.pricing_offer.package_name || ""}\nPrice: ${customerPack.pricing_offer.price_range || ""}\nIncluded:\n- ${(Array.isArray(customerPack.pricing_offer.what_is_included) ? customerPack.pricing_offer.what_is_included.join("\n- ") : customerPack.pricing_offer.what_is_included || "")}` : `First offer: I will set up the first version of ${title} for one niche customer, with onboarding support and a feedback loop, in exchange for an early pilot fee.`
   };
 }
 
@@ -633,12 +813,16 @@ function renderActiveProjectPanel(){
   if(activeProjectTab === "overview"){
     const validationScore = activeProject.validation_toolkit?.validation_score;
     const validationSummary = activeProject.validation_toolkit?.validation_summary;
+    const linkedTickets = getProjectTickets(activeProject);
     contentHtml = `
       <p><b>Why it works:</b><br>${escapeHtml(activeProject.why_it_works || activeProject.description || "")}</p>
       <p><b>Who it serves:</b><br>${escapeHtml(activeProject.who_is_this_for || "A focused target customer")}</p>
       <p><b>Current goal:</b><br>${escapeHtml(activeProject.current_goal || "Validate the smallest version and get the first customer conversation.")}</p>
       ${validationScore ? `<p><b>Validation score:</b><br>${escapeHtml(validationScore.label || "Unknown")} (${escapeHtml(String(validationScore.score || ""))}/10)${validationScore.reason ? ` - ${escapeHtml(validationScore.reason)}` : ""}</p>` : ""}
       ${validationSummary ? `<p><b>Validation summary:</b><br>${escapeHtml(validationSummary)}</p>` : ""}
+      ${activeProject.execution_plan ? `<p><b>Execution summary:</b><br>${escapeHtml(activeProject.execution_plan.summary || "")}</p>` : ""}
+      ${activeProject.first_customer_pack?.pricing_offer ? `<p><b>First pricing offer:</b><br>${escapeHtml(activeProject.first_customer_pack.pricing_offer.package_name || "")} - ${escapeHtml(activeProject.first_customer_pack.pricing_offer.price_range || "")}</p>` : ""}
+      <p><b>Linked tickets:</b><br>${escapeHtml(String(linkedTickets.length))}</p>
     `;
   } else if(activeProjectTab === "progress"){
     contentHtml = `
@@ -652,7 +836,7 @@ function renderActiveProjectPanel(){
       </div>
       <p style="color:#38bdf8; margin-top:10px;"><b>Progress:</b> ${progressDone}/${checklist.length} milestones completed</p>
     `;
-  } else {
+  } else if(activeProjectTab === "assets") {
     contentHtml = `
       <div class="project-assets">
         <p><b>Outreach template</b></p>
@@ -663,6 +847,8 @@ function renderActiveProjectPanel(){
         <pre>${escapeHtml(assets.offer)}</pre>
       </div>
     `;
+  } else {
+    contentHtml = renderProjectTimeline(activeProject);
   }
 
   activeProjectMount.innerHTML = `
@@ -679,7 +865,9 @@ function renderActiveProjectPanel(){
         <button class="project-tab" onclick="continueActiveCoach()">Continue with AI Coach</button>
         <button class="project-tab" onclick="runValidationToolkit()">Run Validation Toolkit</button>
         <button class="project-tab" onclick="runLaunchAgent()">Run Launch Agent</button>
+        <button class="project-tab" onclick="runFirstCustomerPack()">Run First Customer Pack</button>
         <button class="project-tab" onclick="pushToServiceNow()">Push to ServiceNow</button>
+        <button class="project-tab" onclick="exportActiveProjectPdf()">Export Project to PDF</button>
         <button class="project-tab" onclick="reuseActiveProjectInChat()">Reuse in Chat</button>
         <button class="project-tab" onclick="clearActiveProject()">Clear Project</button>
       </div>
@@ -687,6 +875,7 @@ function renderActiveProjectPanel(){
         <button class="project-tab ${activeProjectTab === "overview" ? "active" : ""}" onclick="switchProjectTab('overview')">Overview</button>
         <button class="project-tab ${activeProjectTab === "progress" ? "active" : ""}" onclick="switchProjectTab('progress')">Progress</button>
         <button class="project-tab ${activeProjectTab === "assets" ? "active" : ""}" onclick="switchProjectTab('assets')">Assets</button>
+        <button class="project-tab ${activeProjectTab === "timeline" ? "active" : ""}" onclick="switchProjectTab('timeline')">Timeline</button>
       </div>
       <div class="project-content">${contentHtml}</div>
     </div>
@@ -747,10 +936,20 @@ function setActiveProject(index){
       idea_selected: true,
       validation_completed: false,
       execution_plan_opened: false,
+      first_customer_pack_ready: false,
       first_offer_written: false,
       first_outreach_sent: false,
       first_customer_contacted: false
     },
+    timeline: [
+      {
+        type: "idea_selected",
+        title: "Active project created",
+        details: { summary: `Selected ${idea.title || "this idea"} as the current workspace.` },
+        createdAt: new Date().toISOString()
+      }
+    ],
+    support_tickets: [],
     createdAt: new Date(),
     updatedAt: new Date()
   };
@@ -859,6 +1058,10 @@ async function runLaunchAgent(){
     }
 
     removeMessage(loadingId);
+    activeProject.launch_agent = plan;
+    appendActiveProjectTimeline("launch_agent", "Launch Agent completed", {
+      summary: plan?.first_offer || "Launch assets were generated for this project."
+    });
     const html = renderLaunchAgent(plan, activeProject.title || "Launch Agent");
     addMessage(html, "ai");
     messages.push({
@@ -936,6 +1139,9 @@ async function runValidationToolkit(){
     activeProject.validation_toolkit = toolkit;
     activeProject.progress = activeProject.progress || {};
     activeProject.progress.validation_completed = true;
+    appendActiveProjectTimeline("validation_toolkit", "Validation Toolkit completed", {
+      summary: toolkit?.validation_summary || "Validation insights were generated for this project."
+    });
     saveActiveProjectToStore(activeProject);
     renderActiveProjectPanel();
 
@@ -953,6 +1159,92 @@ async function runValidationToolkit(){
     const errorText = err.message || String(err);
     addMessage(`❌ Validation Toolkit failed: ${escapeHtml(errorText)}`, "ai");
     trackEvent("validation_toolkit_failed", { idea_title: activeProject.title, error: errorText });
+  }
+}
+
+async function runFirstCustomerPack(){
+  if(!activeProject) return;
+
+  collapseActiveProject();
+  const loadingId = addMessage(`⏳ First Customer Pack is preparing outreach assets for <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
+  trackEvent("first_customer_pack_started", { idea_title: activeProject.title });
+
+  try{
+    let res = await fetch("https://skill2income-api.onrender.com/first-customer-pack", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        idea_title: activeProject.title || "",
+        idea_description: activeProject.description || "",
+        history: messages.map(m => ({
+          role: m.role,
+          text: getHistoryText(m)
+        }))
+      })
+    });
+
+    if(!res.ok){
+      res = await fetch("https://skill2income-api.onrender.com/generate-income-plan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          request_type: "first_customer_pack",
+          idea_title: activeProject.title || "",
+          idea_description: activeProject.description || "",
+          interests: activeProject.title || "",
+          history: messages.map(m => ({
+            role: m.role,
+            text: getHistoryText(m)
+          }))
+        })
+      });
+    }
+
+    if(!res.ok){
+      removeMessage(loadingId);
+      addMessage(`❌ First Customer Pack could not finish. Server returned ${res.status}.`, "ai");
+      trackEvent("first_customer_pack_failed", { idea_title: activeProject.title, error: `Server returned ${res.status}` });
+      return;
+    }
+
+    const data = await res.json();
+    const pack = data?.result;
+    if(!pack || Array.isArray(pack)){
+      removeMessage(loadingId);
+      addMessage("⚠️ First Customer Pack response format not supported.", "ai");
+      trackEvent("first_customer_pack_failed", { idea_title: activeProject.title, error: "Unsupported response format" });
+      return;
+    }
+
+    removeMessage(loadingId);
+    activeProject.first_customer_pack = pack;
+    activeProject.progress = activeProject.progress || {};
+    activeProject.progress.first_customer_pack_ready = true;
+    activeProject.progress.first_offer_written = true;
+    appendActiveProjectTimeline("first_customer_pack", "First Customer Pack generated", {
+      summary: pack?.call_to_action || "Customer outreach assets are ready to use."
+    });
+    saveActiveProjectToStore(activeProject);
+    renderActiveProjectPanel();
+
+    const html = renderFirstCustomerPack(pack, activeProject.title || "First Customer Pack");
+    addMessage(html, "ai");
+    messages.push({
+      role: "ai",
+      text: html,
+      historyText: JSON.stringify({ first_customer_pack_for: activeProject.title, result: pack })
+    });
+    saveChat();
+    trackEvent("first_customer_pack_succeeded", { idea_title: activeProject.title });
+  } catch(err){
+    removeMessage(loadingId);
+    const errorText = err.message || String(err);
+    addMessage(`❌ First Customer Pack failed: ${escapeHtml(errorText)}`, "ai");
+    trackEvent("first_customer_pack_failed", { idea_title: activeProject.title, error: errorText });
   }
 }
 
@@ -986,6 +1278,22 @@ async function pushToServiceNow(){
 
     const html = renderServiceNowResult(data.result || {}, activeProject.title || "Active Project");
     addMessage(html, "ai");
+    saveSupportTicket({
+      number: data?.result?.number || "",
+      table: data?.result?.table || "incident",
+      status: data?.result?.status || "Submitted",
+      display: data?.result?.display || activeProject.title || "Active Project",
+      source: "project_export",
+      project_title: activeProject.title || "",
+      createdAt: new Date().toISOString(),
+      lastCheckedAt: new Date().toISOString()
+    });
+    linkTicketToActiveProject({
+      number: data?.result?.number || ""
+    });
+    appendActiveProjectTimeline("servicenow_export", "Project pushed to ServiceNow", {
+      summary: `Created ticket ${data?.result?.number || "record"} for this project.`
+    });
     messages.push({
       role: "ai",
       text: html,
@@ -1048,6 +1356,23 @@ async function submitIssueReport(){
 
     const html = renderIssueResult(data.result || {}, title);
     addMessage(html, "ai");
+    saveSupportTicket({
+      number: data?.result?.number || "",
+      table: data?.result?.table || "incident",
+      status: data?.result?.status || "Submitted",
+      display: title,
+      title,
+      source: "issue_report",
+      project_title: activeProject?.title || "",
+      createdAt: new Date().toISOString(),
+      lastCheckedAt: new Date().toISOString()
+    });
+    if(activeProject){
+      linkTicketToActiveProject({ number: data?.result?.number || "" });
+      appendActiveProjectTimeline("issue_report", "Issue reported", {
+        summary: `Submitted support ticket ${data?.result?.number || ""} for ${title}.`
+      });
+    }
     messages.push({
       role: "ai",
       text: html,
@@ -1099,6 +1424,25 @@ async function submitTicketStatusCheck(){
 
     const html = renderTicketStatusResult(data.result || {}, ticketNumber);
     addMessage(html, "ai");
+    const existingTicket = supportTickets.find(ticket => ticket.number === (data?.result?.number || ticketNumber));
+    saveSupportTicket({
+      number: data?.result?.number || ticketNumber,
+      table: data?.result?.table || existingTicket?.table || "incident",
+      status: data?.result?.status || "Unknown",
+      display: data?.result?.display || existingTicket?.display || "",
+      title: existingTicket?.title || "",
+      source: existingTicket?.source || "status_check",
+      project_title: existingTicket?.project_title || activeProject?.title || "",
+      createdAt: existingTicket?.createdAt || new Date().toISOString(),
+      lastCheckedAt: new Date().toISOString(),
+      updated_at: data?.result?.updated_at || "",
+      created_at: data?.result?.created_at || ""
+    });
+    if(activeProject && (existingTicket?.project_title === activeProject.title || activeProject.support_tickets?.includes(ticketNumber))){
+      appendActiveProjectTimeline("ticket_status", "Ticket status updated", {
+        summary: `${data?.result?.number || ticketNumber} is now ${data?.result?.status || "Updated"}.`
+      });
+    }
     messages.push({
       role: "ai",
       text: html,
@@ -1238,6 +1582,8 @@ if (
 removeMessage(loadingId);
 
 currentPlans = resultData;
+compareIdeas = [];
+loadChatList();
 
 resultData.forEach((p, i)=>{
   const steps = p && Array.isArray(p.steps)
@@ -1330,6 +1676,9 @@ ${p.personal_reason || "Based on your interests and skills"}
       </button>
       <button onclick="setActiveProject(${i})" style="padding:8px 12px; border:none; border-radius:8px; background:#facc15; color:#020617; font-weight:600; cursor:pointer; margin-left:8px;">
         Set Active Project
+      </button>
+      <button onclick="toggleIdeaComparison(${i})" style="padding:8px 12px; border:none; border-radius:8px; background:#c084fc; color:#020617; font-weight:600; cursor:pointer; margin-left:8px;">
+        Add to Compare
       </button>
     </div>
 
@@ -1424,6 +1773,187 @@ function saveChat(){
   .collection("chats").doc(currentChatId)
   .set({ messages: messages,updatedAt: new Date()
   }, { merge: true });
+}
+
+function toggleIdeaComparison(index){
+  const idea = currentPlans[index];
+  if(!idea) return;
+
+  const exists = compareIdeas.find(item => item.title === idea.title);
+  if(exists){
+    compareIdeas = compareIdeas.filter(item => item.title !== idea.title);
+    alert(`Removed "${idea.title}" from comparison.`);
+  } else {
+    if(compareIdeas.length >= 3){
+      alert("You can compare up to 3 ideas at a time.");
+      return;
+    }
+    compareIdeas.push(idea);
+    alert(`Added "${idea.title}" to comparison.`);
+  }
+
+  loadChatList();
+}
+
+async function runIdeaComparison(){
+  if(compareIdeas.length < 2){
+    alert("Select at least 2 ideas first using Add to Compare.");
+    return;
+  }
+
+  closeMobileSidebar();
+  const loadingId = addMessage(`⏳ Comparing ${compareIdeas.length} ideas to help you pick the best one...`, "ai");
+  trackEvent("idea_comparison_started", { count: compareIdeas.length });
+
+  try{
+    let res = await fetch("https://skill2income-api.onrender.com/idea-comparison", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        ideas: compareIdeas,
+        history: messages.map(m => ({
+          role: m.role,
+          text: getHistoryText(m)
+        }))
+      })
+    });
+
+    if(!res.ok){
+      res = await fetch("https://skill2income-api.onrender.com/generate-income-plan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          request_type: "idea_comparison",
+          ideas: compareIdeas,
+          history: messages.map(m => ({
+            role: m.role,
+            text: getHistoryText(m)
+          }))
+        })
+      });
+    }
+
+    if(!res.ok){
+      removeMessage(loadingId);
+      addMessage(`❌ Idea Comparison could not finish. Server returned ${res.status}.`, "ai");
+      trackEvent("idea_comparison_failed", { error: `Server returned ${res.status}` });
+      return;
+    }
+
+    const data = await res.json();
+    const comparison = data?.result;
+    if(!comparison || Array.isArray(comparison)){
+      removeMessage(loadingId);
+      addMessage("⚠️ Idea Comparison response format not supported.", "ai");
+      trackEvent("idea_comparison_failed", { error: "Unsupported response format" });
+      return;
+    }
+
+    removeMessage(loadingId);
+    const html = renderIdeaComparison(comparison);
+    addMessage(html, "ai");
+    messages.push({
+      role: "ai",
+      text: html,
+      historyText: JSON.stringify({ idea_comparison: compareIdeas.map(item => item.title), result: comparison })
+    });
+    saveChat();
+    compareIdeas = [];
+    loadChatList();
+    trackEvent("idea_comparison_succeeded", { winner: comparison?.winner_title || "" });
+  } catch(err){
+    removeMessage(loadingId);
+    const errorText = err.message || String(err);
+    addMessage(`❌ Idea Comparison failed: ${escapeHtml(errorText)}`, "ai");
+    trackEvent("idea_comparison_failed", { error: errorText });
+  }
+}
+
+function buildProjectExportHtml(project){
+  const tickets = getProjectTickets(project);
+  const executionSteps = Array.isArray(project?.execution_plan?.steps) ? project.execution_plan.steps : [];
+  const validationQuestions = Array.isArray(project?.validation_toolkit?.outreach_questions) ? project.validation_toolkit.outreach_questions : [];
+  const launchDays = Array.isArray(project?.launch_agent?.seven_day_plan) ? project.launch_agent.seven_day_plan : [];
+  const proofPoints = Array.isArray(project?.first_customer_pack?.landing_page_copy?.proof_points) ? project.first_customer_pack.landing_page_copy.proof_points : [];
+  const timeline = Array.isArray(project?.timeline) ? project.timeline : [];
+
+  return `
+    <div style="font-family:Inter, Arial, sans-serif; color:#0f172a; padding:24px;">
+      <h1 style="margin:0 0 6px 0;">${escapeHtml(project?.title || "Active Project")}</h1>
+      <p style="margin:0 0 16px 0; color:#334155;">Skill2Income Project Export</p>
+      <h2>Overview</h2>
+      <p><b>Description:</b> ${escapeHtml(project?.description || "")}</p>
+      <p><b>Audience:</b> ${escapeHtml(project?.who_is_this_for || "")}</p>
+      <p><b>Why it works:</b> ${escapeHtml(project?.why_it_works || "")}</p>
+      <p><b>Current goal:</b> ${escapeHtml(project?.current_goal || "")}</p>
+      ${project?.validation_toolkit?.validation_summary ? `<p><b>Validation summary:</b> ${escapeHtml(project.validation_toolkit.validation_summary)}</p>` : ""}
+
+      ${project?.execution_plan ? `
+        <h2>Execution Plan</h2>
+        <p>${escapeHtml(project.execution_plan.summary || "")}</p>
+        <ol>${executionSteps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}</ol>
+      ` : ""}
+
+      ${project?.validation_toolkit ? `
+        <h2>Validation Toolkit</h2>
+        <p><b>Score:</b> ${escapeHtml(project.validation_toolkit.validation_score?.label || "")} (${escapeHtml(String(project.validation_toolkit.validation_score?.score || ""))}/10)</p>
+        <ol>${validationQuestions.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ol>
+      ` : ""}
+
+      ${project?.launch_agent ? `
+        <h2>Launch Agent</h2>
+        <p><b>Niche:</b> ${escapeHtml(project.launch_agent.niche || "")}</p>
+        <p><b>First offer:</b> ${escapeHtml(project.launch_agent.first_offer || "")}</p>
+        <ol>${launchDays.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ol>
+      ` : ""}
+
+      ${project?.first_customer_pack ? `
+        <h2>First Customer Pack</h2>
+        <p><b>Positioning:</b> ${escapeHtml(project.first_customer_pack.positioning || "")}</p>
+        <p><b>Cold email:</b><br>${escapeHtml(project.first_customer_pack.cold_email || "")}</p>
+        <p><b>LinkedIn DM:</b><br>${escapeHtml(project.first_customer_pack.linkedin_dm || "")}</p>
+        <p><b>WhatsApp pitch:</b><br>${escapeHtml(project.first_customer_pack.whatsapp_pitch || "")}</p>
+        <p><b>Pricing:</b> ${escapeHtml(project.first_customer_pack.pricing_offer?.package_name || "")} - ${escapeHtml(project.first_customer_pack.pricing_offer?.price_range || "")}</p>
+        <ul>${proofPoints.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      ` : ""}
+
+      <h2>Project Timeline</h2>
+      ${timeline.length ? `<ul>${timeline.map(item => `<li><b>${escapeHtml(item.title || item.type || "Update")}:</b> ${escapeHtml(item.details?.summary || "")} (${escapeHtml(formatDisplayDate(item.createdAt))})</li>`).join("")}</ul>` : "<p>No timeline entries yet.</p>"}
+
+      <h2>Linked Tickets</h2>
+      ${tickets.length ? `<ul>${tickets.map(ticket => `<li><b>${escapeHtml(ticket.number || "")}</b> - ${escapeHtml(ticket.status || "Submitted")} - ${escapeHtml(ticket.display || ticket.title || "")}</li>`).join("")}</ul>` : "<p>No linked tickets yet.</p>"}
+    </div>
+  `;
+}
+
+function exportActiveProjectPdf(){
+  if(!activeProject){
+    alert("Set an Active Project first.");
+    return;
+  }
+
+  const wrapper = document.createElement("div");
+  wrapper.style.position = "fixed";
+  wrapper.style.left = "-99999px";
+  wrapper.style.top = "0";
+  wrapper.style.background = "white";
+  wrapper.innerHTML = buildProjectExportHtml(activeProject);
+  document.body.appendChild(wrapper);
+
+  html2pdf().from(wrapper).set({
+    margin: 10,
+    filename: `${(activeProject.title || "skill2income-project").replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.pdf`,
+    html2canvas: { scale: 2 },
+    jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
+  }).save().finally(() => {
+    wrapper.remove();
+  });
+
+  trackEvent("project_pdf_exported", { idea_title: activeProject.title || "" });
 }
 // NAV
 function goDashboard(){
@@ -1659,6 +2189,16 @@ async function generateExecutionPlan(index){
     }
 
     removeMessage(loadingId);
+    if(activeProject && activeProject.title === idea.title){
+      activeProject.execution_plan = plan;
+      activeProject.progress = activeProject.progress || {};
+      activeProject.progress.execution_plan_opened = true;
+      appendActiveProjectTimeline("execution_plan", "Execution plan generated", {
+        summary: plan?.summary || "A practical execution plan was generated for this project."
+      });
+      saveActiveProjectToStore(activeProject);
+      renderActiveProjectPanel();
+    }
     const html = renderExecutionPlan(plan, idea.title || "Execution Plan");
     addMessage(html, "ai");
     messages.push({
@@ -1825,6 +2365,62 @@ function renderLaunchAgent(plan, ideaTitle){
       <ol>
         ${launchDays.map(day => `<li>${escapeHtml(day)}</li>`).join("")}
       </ol>
+    </div>
+  `;
+}
+
+function renderFirstCustomerPack(pack, ideaTitle){
+  const proofPoints = Array.isArray(pack?.landing_page_copy?.proof_points) ? pack.landing_page_copy.proof_points : [];
+  const pricingItems = Array.isArray(pack?.pricing_offer?.what_is_included) ? pack.pricing_offer.what_is_included : [];
+
+  return `
+    <div style="margin-bottom:15px; padding:15px; background:#1a1030; border:2px solid #c084fc; border-radius:12px;">
+      <div style="color:#c084fc; font-weight:bold; margin-bottom:8px;">First Customer Pack</div>
+      <h3 style="color:#e9d5ff;">${escapeHtml(ideaTitle)}</h3>
+      <p><b>Positioning:</b><br>${escapeHtml(pack.positioning || "")}</p>
+      <p><b>Cold Email:</b></p>
+      <div style="background:#111827; border:1px solid #312e81; border-radius:10px; padding:10px; color:#f5f3ff;">${escapeHtml(pack.cold_email || "")}</div>
+      <p style="margin-top:12px;"><b>LinkedIn DM:</b></p>
+      <div style="background:#111827; border:1px solid #312e81; border-radius:10px; padding:10px; color:#f5f3ff;">${escapeHtml(pack.linkedin_dm || "")}</div>
+      <p style="margin-top:12px;"><b>WhatsApp Pitch:</b></p>
+      <div style="background:#111827; border:1px solid #312e81; border-radius:10px; padding:10px; color:#f5f3ff;">${escapeHtml(pack.whatsapp_pitch || "")}</div>
+      <p><b>Pricing Offer:</b> ${escapeHtml(pack?.pricing_offer?.package_name || "")} - ${escapeHtml(pack?.pricing_offer?.price_range || "")}</p>
+      <ul>
+        ${pricingItems.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+      <p><b>Landing Page Copy:</b></p>
+      <ul>
+        <li><b>Headline:</b> ${escapeHtml(pack?.landing_page_copy?.headline || "")}</li>
+        <li><b>Subheadline:</b> ${escapeHtml(pack?.landing_page_copy?.subheadline || "")}</li>
+        ${proofPoints.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+      <p><b>Call to action:</b><br>${escapeHtml(pack.call_to_action || "")}</p>
+    </div>
+  `;
+}
+
+function renderIdeaComparison(comparison){
+  const rankings = Array.isArray(comparison.rankings) ? comparison.rankings : [];
+
+  return `
+    <div style="margin-bottom:15px; padding:15px; background:#0f172a; border:2px solid #f97316; border-radius:12px;">
+      <div style="color:#f97316; font-weight:bold; margin-bottom:8px;">Idea Comparison Mode</div>
+      <h3 style="color:#fdba74;">Winner: ${escapeHtml(comparison.winner_title || "No winner selected")}</h3>
+      <p>${escapeHtml(comparison.comparison_summary || "")}</p>
+      ${rankings.map(item => `
+        <div style="margin-top:12px; padding:12px; background:#111827; border-radius:10px; border:1px solid #334155;">
+          <div style="color:#f8fafc; font-weight:700;">${escapeHtml(item.title || "Idea")}</div>
+          <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; margin-top:8px; color:#cbd5e1;">
+            <div><b>Effort:</b> ${escapeHtml(item.effort || "")}</div>
+            <div><b>Speed to income:</b> ${escapeHtml(item.speed_to_income || "")}</div>
+            <div><b>Scalability:</b> ${escapeHtml(item.scalability || "")}</div>
+            <div><b>Validation difficulty:</b> ${escapeHtml(item.validation_difficulty || "")}</div>
+          </div>
+          <p style="margin-top:8px;"><b>Best for:</b> ${escapeHtml(item.best_for || "")}</p>
+          <p><b>Caution:</b> ${escapeHtml(item.caution || "")}</p>
+        </div>
+      `).join("")}
+      <p style="margin-top:12px;"><b>Recommendation:</b><br>${escapeHtml(comparison.recommendation || "")}</p>
     </div>
   `;
 }
