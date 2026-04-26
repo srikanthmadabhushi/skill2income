@@ -3,6 +3,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Skill2Income AI</title>
 
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -16,10 +17,11 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
 <style>
-body { margin:0; font-family:'Inter'; background:#020617; color:white;}
-.app { display:flex; height:100vh;}
+body { margin:0; font-family:'Inter'; background:#020617; color:white; overflow:hidden;}
+.app { display:flex; height:100vh; height:100dvh;}
 
-.sidebar { width:260px; background:#0f172a; padding:10px; overflow:auto;}
+.sidebar-backdrop { display:none; }
+.sidebar { width:260px; background:#0f172a; padding:10px; overflow:auto; flex-shrink:0;}
 .sidebar button {
   width:100%; margin-bottom:10px; padding:10px;
   background:#1e293b; border:none; border-radius:8px; color:white;
@@ -38,8 +40,10 @@ body { margin:0; font-family:'Inter'; background:#020617; color:white;}
 .chat-menu div:hover { background: #374151;
 }
 
-.chat-container { flex:1; display:flex; flex-direction:column;}
-.top-bar { padding:12px; border-bottom:1px solid #1e293b;}
+.chat-container { flex:1; display:flex; flex-direction:column; min-width:0;}
+.top-bar { padding:12px; border-bottom:1px solid #1e293b; display:flex; align-items:center; gap:12px;}
+.top-bar-title { font-weight:600; }
+.mobile-menu-btn { display:none; background:#1e293b; color:white; border:none; border-radius:10px; padding:8px 10px; cursor:pointer; }
 .chat-box { flex:1; padding:20px; overflow:auto;}
 .active-project-wrap { padding:14px 20px; border-bottom:1px solid #1e293b; background:#06111f; }
 .active-project-card { background:#0f172a; border:1px solid #1e293b; border-radius:14px; padding:16px; }
@@ -67,7 +71,7 @@ body { margin:0; font-family:'Inter'; background:#020617; color:white;}
 
 .chat-item span:first-child { flex: 1;  cursor: pointer;
 }
-.message { margin-bottom:15px; padding:12px; border-radius:10px;  max-width:70%;
+.message { margin-bottom:15px; padding:12px; border-radius:10px;  max-width:70%; overflow-wrap:anywhere;
 }
 .user { background:#2563eb; margin-left:auto;}
 .ai { background:#111827;}
@@ -77,7 +81,7 @@ body { margin:0; font-family:'Inter'; background:#020617; color:white;}
   background:#1f2937; border:none; color:white;
 }
 
-.input-box {display: flex; align-items: center; gap: 8px; padding: 10px;background: #020617; position: sticky; bottom: 0;
+.input-box {display: flex; align-items: center; gap: 8px; padding: 10px;background: #020617; position: sticky; bottom: 0; border-top:1px solid #1e293b; padding-bottom:calc(10px + env(safe-area-inset-bottom));
 }
 
 
@@ -89,40 +93,137 @@ button.send {padding: 10px 14px; border-radius: 8px; background: #22c55e; color:
 
 a { color:#60a5fa; text-decoration:underline; }
 
-@media (max-width: 768px) { 
+@media (max-width: 768px) {
+  body { overflow:auto; }
 
   .app {
-    flex-direction: column; height: auto;
+    display:block;
+    height:100vh;
+    height:100dvh;
   }
 
-  .sidebar { width: 100%; height: auto; display: flex; overflow-x: auto; gap: 8px;
+  .sidebar-backdrop.open {
+    display:block;
+    position:fixed;
+    inset:0;
+    background:rgba(2,6,23,0.62);
+    z-index:9998;
   }
 
-  .sidebar button {flex: 1; font-size: 12px; padding: 8px;
+  .sidebar {
+    position:fixed;
+    top:0;
+    left:0;
+    bottom:0;
+    width:min(82vw, 320px);
+    max-width:320px;
+    z-index:9999;
+    transform:translateX(-100%);
+    transition:transform 0.25s ease;
+    padding:14px;
+    box-shadow:18px 0 40px rgba(0,0,0,0.35);
   }
 
-  .chat-container { flex: 1; display: flex; flex-direction: column; height: 100vh;
+  .sidebar.mobile-open {
+    transform:translateX(0);
   }
 
-  .chat-box {flex: 1; overflow-y: auto;
+  .sidebar button {
+    font-size:14px;
+    padding:12px;
   }
 
-  .message {max-width: 95%; font-size: 14px;
+  .chat-container {
+    height:100vh;
+    height:100dvh;
   }
 
-  .input-box {flex-direction: row; padding: 8px;
+  .top-bar {
+    position:sticky;
+    top:0;
+    z-index:20;
+    background:#020617;
+    padding:12px 14px;
   }
 
-  input {font-size: 13px;
+  .mobile-menu-btn {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
   }
 
-  button.send {padding: 8px 10px; font-size: 12px;
+  .chat-box {
+    padding:14px;
   }
 
-  .suggestions {display: flex;overflow-x: auto;
+  .active-project-wrap {
+    padding:12px 14px;
   }
 
-  .suggestions button { white-space: nowrap; font-size: 12px;
+  .active-project-card {
+    padding:14px;
+  }
+
+  .project-header,
+  .modal-actions {
+    flex-direction:column;
+    align-items:stretch;
+  }
+
+  .project-actions,
+  .project-tabs {
+    gap:10px;
+  }
+
+  .project-tab {
+    width:100%;
+    text-align:center;
+  }
+
+  .message {
+    max-width:100%;
+    font-size:14px;
+  }
+
+  .input-box {
+    padding:10px 12px;
+  }
+
+  input {
+    min-width:0;
+    font-size:16px;
+  }
+
+  button.send {
+    padding:10px 12px;
+    font-size:13px;
+  }
+
+  .suggestions {
+    display:flex;
+    overflow-x:auto;
+    padding:8px 10px;
+  }
+
+  .suggestions button {
+    white-space:nowrap;
+    font-size:12px;
+  }
+
+  .chat-item {
+    align-items:flex-start;
+    gap:10px;
+  }
+
+  .chat-menu {
+    right:0;
+    top:34px;
+  }
+
+  .modal-card {
+    width:100%;
+    max-height:85vh;
+    overflow:auto;
   }
 }
 .sidebar {transition: all 0.3s ease;
@@ -138,10 +239,14 @@ a { color:#60a5fa; text-decoration:underline; }
 
 <div class="app">
 
+<div id="sidebarBackdrop" class="sidebar-backdrop" onclick="closeMobileSidebar()"></div>
 <div class="sidebar" id="sidebar"></div>
 
 <div class="chat-container">
-<div class="top-bar">🚀 Skill2Income AI</div>
+<div class="top-bar">
+  <button class="mobile-menu-btn" onclick="toggleMobileSidebar()">☰</button>
+  <div class="top-bar-title">🚀 Skill2Income AI</div>
+</div>
 <div id="activeProjectMount" class="active-project-wrap"></div>
 
 <div id="chat" class="chat-box"></div>
@@ -202,6 +307,7 @@ const db = firebase.firestore();
 
 const chat = document.getElementById("chat");
 const sidebar = document.getElementById("sidebar");
+const sidebarBackdrop = document.getElementById("sidebarBackdrop");
 const userInput = document.getElementById("userInput");
 const activeProjectMount = document.getElementById("activeProjectMount");
 const issueModal = document.getElementById("issueModal");
@@ -242,6 +348,29 @@ function closeAllChatMenus(){
   });
 }
 
+function isMobileView(){
+  return window.innerWidth <= 768;
+}
+
+function openMobileSidebar(){
+  if(!isMobileView()) return;
+  sidebar.classList.add("mobile-open");
+  sidebarBackdrop.classList.add("open");
+}
+
+function closeMobileSidebar(){
+  sidebar.classList.remove("mobile-open");
+  sidebarBackdrop.classList.remove("open");
+}
+
+function toggleMobileSidebar(){
+  if(sidebar.classList.contains("mobile-open")){
+    closeMobileSidebar();
+  } else {
+    openMobileSidebar();
+  }
+}
+
 // ENTER
 userInput.addEventListener("keypress", e=>{
  if(e.key==="Enter") sendMessage();
@@ -250,6 +379,12 @@ userInput.addEventListener("keypress", e=>{
 document.addEventListener("click", (e) => {
   if (!e.target.closest(".chat-item")) {
     closeAllChatMenus();
+  }
+});
+
+window.addEventListener("resize", () => {
+  if(!isMobileView()){
+    closeMobileSidebar();
   }
 });
 
@@ -403,6 +538,7 @@ function setInputValue(text){
 }
 
 function openIssueModal(){
+  closeMobileSidebar();
   issueModal.style.display = "flex";
 }
 
@@ -411,6 +547,7 @@ function closeIssueModal(){
 }
 
 function openTicketStatusModal(){
+  closeMobileSidebar();
   ticketStatusModal.style.display = "flex";
 }
 
@@ -984,6 +1121,7 @@ function quickFill(text){
 
 // NEW CHAT
 async function newChat(){
+ closeMobileSidebar();
  const doc=await db.collection("users").doc(auth.currentUser.uid)
  .collection("chats").add({
    title:"New Chat",
@@ -1229,6 +1367,7 @@ saveChat();
 }
 // LOAD CHAT
 function loadChat(id){
+  closeMobileSidebar();
   db.collection("users").doc(auth.currentUser.uid)
   .collection("chats").doc(id).get().then(doc=>{
     if(!doc.exists) return;
@@ -1250,6 +1389,7 @@ function loadChat(id){
 
 // DELETE
 function deleteChat(id){
+ closeMobileSidebar();
  db.collection("users").doc(auth.currentUser.uid)
  .collection("chats").doc(id).delete().then(loadChatList);
 }
@@ -1272,6 +1412,7 @@ function savePlan(index){
 
 // RENAME
 function renameChat(id,name){
+ closeMobileSidebar();
  db.collection("users").doc(auth.currentUser.uid)
  .collection("chats").doc(id).update({title:name}).then(loadChatList);
 }
@@ -1286,7 +1427,16 @@ function saveChat(){
 }
 // NAV
 function goDashboard(){
+ closeMobileSidebar();
  window.location.href="dashboard.html";
+}
+
+function logout(){
+ closeMobileSidebar();
+ auth.signOut().then(()=>{
+   alert("Logged out");
+   location.reload();
+ });
 }
 
 // INIT
@@ -1323,11 +1473,6 @@ window.onload = () => {
 
   addMessage("💡 Example: I know Python, want freelancing","ai");
 };
-function logout(){
-  auth.signOut().then(()=>{alert("Logged out");
-    location.reload();
-  });
-}
 function showUpgrade(){
   alert("💎 Premium coming soon!\n\n✔ Unlimited plans\n✔ Advanced AI\n✔ Export features");
 }
