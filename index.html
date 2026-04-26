@@ -149,6 +149,7 @@ const userInput = document.getElementById("userInput");
 let currentChatId=null;
 let messages=[];
 let currentPlans=[];
+let selectedCoachIdea=null;
 
 function getHistoryText(message){
   if (message.historyText) return message.historyText;
@@ -316,6 +317,11 @@ function escapeHtml(text){
     .replace(/'/g, "&#39;");
 }
 
+function setInputValue(text){
+  userInput.value = text || "";
+  userInput.focus();
+}
+
 // QUICK FILL
 function quickFill(text){
  userInput.value=text;
@@ -355,6 +361,11 @@ async function sendMessage(){
   addMessage(text,"user");
   messages.push({role:"user",text});
   userInput.value="";
+
+  if(selectedCoachIdea){
+    await sendCoachMessage(text);
+    return;
+  }
 
   const loadingId = addMessage("⏳ Thinking... generating your plan","ai");
 
@@ -516,6 +527,9 @@ ${p.personal_reason || "Based on your interests and skills"}
     <div style="margin-top:12px;">
       <button onclick="generateExecutionPlan(${i})" style="padding:8px 12px; border:none; border-radius:8px; background:#38bdf8; color:#020617; font-weight:600; cursor:pointer;">
         Get Execution Plan
+      </button>
+      <button onclick="startCoachMode(${i})" style="padding:8px 12px; border:none; border-radius:8px; background:#22c55e; color:#020617; font-weight:600; cursor:pointer; margin-left:8px;">
+        AI Coach Mode
       </button>
     </div>
 
@@ -681,6 +695,104 @@ function extractSkill(text){
   return text.trim();
 }
 
+function startCoachMode(index){
+  const idea = currentPlans[index];
+  if(!idea) return;
+
+  selectedCoachIdea = {
+    title: idea.title || "",
+    description: idea.description || ""
+  };
+
+  const html = `
+    <div style="margin-bottom:15px; padding:15px; background:#052e16; border:2px solid #22c55e; border-radius:12px;">
+      <div style="color:#22c55e; font-weight:bold; margin-bottom:8px;">AI Coach Mode</div>
+      <p><b>Selected idea:</b> ${escapeHtml(selectedCoachIdea.title)}</p>
+      <p style="color:#cbd5e1;">Ask for a beginner version, first customers, validation, pricing, or scaling.</p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+        <button onclick="setInputValue('Give me a beginner version')" style="padding:8px 10px; border:none; border-radius:20px; background:#166534; color:white; cursor:pointer;">Beginner version</button>
+        <button onclick="setInputValue('Give me a faster income version')" style="padding:8px 10px; border:none; border-radius:20px; background:#166534; color:white; cursor:pointer;">Faster income</button>
+        <button onclick="setInputValue('How do I find first customers?')" style="padding:8px 10px; border:none; border-radius:20px; background:#166534; color:white; cursor:pointer;">First customers</button>
+        <button onclick="exitCoachMode()" style="padding:8px 10px; border:none; border-radius:20px; background:#14532d; color:white; cursor:pointer;">Exit coach mode</button>
+      </div>
+    </div>
+  `;
+
+  addMessage(html, "ai");
+  messages.push({
+    role: "ai",
+    text: html,
+    historyText: `AI Coach Mode started for ${selectedCoachIdea.title}`
+  });
+  saveChat();
+  setInputValue(`Help me refine ${selectedCoachIdea.title}`);
+}
+
+async function sendCoachMessage(text){
+  const coachIdea = selectedCoachIdea;
+  addMessage(text, "user");
+  messages.push({ role: "user", text });
+  userInput.value = "";
+
+  const loadingId = addMessage(`⏳ AI Coach is thinking about <b>${escapeHtml(coachIdea.title)}</b>...`, "ai");
+
+  try{
+    const res = await fetch("https://skill2income-api.onrender.com/ai-coach", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        idea_title: coachIdea.title,
+        idea_description: coachIdea.description,
+        message: text,
+        history: messages.map(m => ({
+          role: m.role,
+          text: getHistoryText(m)
+        }))
+      })
+    });
+
+    if(!res.ok){
+      removeMessage(loadingId);
+      addMessage("❌ AI Coach could not respond. Try again.","ai");
+      return;
+    }
+
+    const data = await res.json();
+    const coach = data?.result;
+    removeMessage(loadingId);
+
+    if(!coach || Array.isArray(coach)){
+      addMessage("⚠️ AI Coach response format not supported.","ai");
+      return;
+    }
+
+    const html = renderCoachReply(coach, coachIdea.title);
+    addMessage(html, "ai");
+    messages.push({
+      role: "ai",
+      text: html,
+      historyText: JSON.stringify({ coach_idea: coachIdea.title, result: coach })
+    });
+    saveChat();
+  } catch(err){
+    removeMessage(loadingId);
+    addMessage(`❌ Error: ${err.message || err}`, "ai");
+  }
+}
+
+function exitCoachMode(){
+  selectedCoachIdea = null;
+  addMessage(`<div style="padding:12px; background:#111827; border-radius:10px;">AI Coach Mode closed. You can generate new ideas or start coach mode on another card.</div>`, "ai");
+  messages.push({
+    role: "ai",
+    text: "AI Coach Mode closed.",
+    historyText: "AI Coach Mode closed."
+  });
+  saveChat();
+}
+
 async function generateExecutionPlan(index){
   const idea = currentPlans[index];
   if(!idea) return;
@@ -795,6 +907,27 @@ function renderExecutionPlan(plan, ideaTitle){
         ${quickWins.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
       </ul>
       <p><b>First Offer:</b><br>${escapeHtml(plan.first_offer || "")}</p>
+    </div>
+  `;
+}
+
+function renderCoachReply(coach, ideaTitle){
+  const replies = Array.isArray(coach.suggested_replies) ? coach.suggested_replies : [];
+  const nextSteps = Array.isArray(coach.next_steps) ? coach.next_steps : [];
+
+  return `
+    <div style="margin-bottom:15px; padding:15px; background:#071a12; border:2px solid #22c55e; border-radius:12px;">
+      <div style="color:#22c55e; font-weight:bold; margin-bottom:8px;">AI Coach</div>
+      <h3 style="color:#86efac;">${escapeHtml(ideaTitle)}</h3>
+      <p>${escapeHtml(coach.reply || "")}</p>
+      <p><b>Next steps:</b></p>
+      <ul>
+        ${nextSteps.map(step => `<li>${escapeHtml(step)}</li>`).join("")}
+      </ul>
+      <p><b>Try next:</b></p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        ${replies.map(reply => `<button onclick="setInputValue('${escapeHtml(reply)}')" style="padding:8px 10px; border:none; border-radius:20px; background:#166534; color:white; cursor:pointer;">${escapeHtml(reply)}</button>`).join("")}
+      </div>
     </div>
   `;
 }
