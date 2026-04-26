@@ -60,6 +60,10 @@ body { margin:0; font-family:'Inter'; background:#020617; color:white; overflow:
 .project-tab { background:#111827; color:white; border:none; border-radius:999px; padding:8px 12px; cursor:pointer; }
 .project-tab.active { background:#2563eb; }
 .project-content { background:#020617; border:1px solid #1f2937; border-radius:12px; padding:14px; }
+.project-collapsed-bar { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.project-collapsed-copy { min-width:0; }
+.project-collapsed-copy .project-title { font-size:16px; margin-bottom:2px; }
+.project-collapsed-copy .project-subtitle { font-size:12px; }
 .project-checklist label { display:block; margin:8px 0; color:#cbd5e1; }
 .project-checklist input { margin-right:8px; }
 .project-assets { color:#cbd5e1; }
@@ -778,6 +782,7 @@ function collapseProjectForResult(){
     activeProjectCollapsed = true;
     renderActiveProjectPanel();
   }
+  closeMobileSidebar();
   scrollChatToBottom();
 }
 
@@ -1015,6 +1020,7 @@ async function copyShareSummary(mode = "general"){
     return;
   }
 
+  collapseProjectForResult();
   const text = buildShareSummary(mode);
   await navigator.clipboard.writeText(text);
   alert(mode === "linkedin" ? "LinkedIn-ready summary copied." : "Project summary copied.");
@@ -1136,10 +1142,11 @@ function renderActiveProjectPanel(){
   if(activeProjectCollapsed){
     activeProjectMount.innerHTML = `
       <div class="active-project-card">
-        <div class="project-header">
-          <div>
+        <div class="project-collapsed-bar">
+          <div class="project-collapsed-copy">
             <p class="project-subtitle">Active Project</p>
             <h3 class="project-title">${escapeHtml(activeProject.title || "Untitled idea")}</h3>
+            <p class="project-subtitle">Workspace collapsed so you can view the latest result.</p>
           </div>
           <button class="project-tab" onclick="expandActiveProject()">Open Workspace</button>
         </div>
@@ -2282,6 +2289,7 @@ function exportActiveProjectPdf(){
     return;
   }
 
+  collapseProjectForResult();
   const jsPDFCtor = window.jspdf?.jsPDF;
   if(jsPDFCtor){
     const doc = new jsPDFCtor({ unit: "mm", format: "a4", orientation: "portrait" });
