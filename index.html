@@ -424,6 +424,7 @@ function trackEvent(eventName, metadata = {}){
 function getProjectChecklist(){
   return [
     { key: "idea_selected", label: "Idea selected" },
+    { key: "validation_completed", label: "Validation toolkit completed" },
     { key: "execution_plan_opened", label: "Execution plan opened" },
     { key: "first_offer_written", label: "First offer written" },
     { key: "first_outreach_sent", label: "First outreach sent" },
@@ -471,10 +472,14 @@ function renderActiveProjectPanel(){
   let contentHtml = "";
 
   if(activeProjectTab === "overview"){
+    const validationScore = activeProject.validation_toolkit?.validation_score;
+    const validationSummary = activeProject.validation_toolkit?.validation_summary;
     contentHtml = `
       <p><b>Why it works:</b><br>${escapeHtml(activeProject.why_it_works || activeProject.description || "")}</p>
       <p><b>Who it serves:</b><br>${escapeHtml(activeProject.who_is_this_for || "A focused target customer")}</p>
       <p><b>Current goal:</b><br>${escapeHtml(activeProject.current_goal || "Validate the smallest version and get the first customer conversation.")}</p>
+      ${validationScore ? `<p><b>Validation score:</b><br>${escapeHtml(validationScore.label || "Unknown")} (${escapeHtml(String(validationScore.score || ""))}/10)${validationScore.reason ? ` - ${escapeHtml(validationScore.reason)}` : ""}</p>` : ""}
+      ${validationSummary ? `<p><b>Validation summary:</b><br>${escapeHtml(validationSummary)}</p>` : ""}
     `;
   } else if(activeProjectTab === "progress"){
     contentHtml = `
@@ -513,6 +518,7 @@ function renderActiveProjectPanel(){
       </div>
       <div class="project-actions">
         <button class="project-tab" onclick="continueActiveCoach()">Continue with AI Coach</button>
+        <button class="project-tab" onclick="runValidationToolkit()">Run Validation Toolkit</button>
         <button class="project-tab" onclick="runLaunchAgent()">Run Launch Agent</button>
         <button class="project-tab" onclick="pushToServiceNow()">Push to ServiceNow</button>
         <button class="project-tab" onclick="reuseActiveProjectInChat()">Reuse in Chat</button>
@@ -580,6 +586,7 @@ function setActiveProject(index){
     current_goal: `Validate ${idea.title || "this idea"} with a narrow audience and get the first real customer conversation.`,
     progress: {
       idea_selected: true,
+      validation_completed: false,
       execution_plan_opened: false,
       first_offer_written: false,
       first_outreach_sent: false,
@@ -703,6 +710,88 @@ async function runLaunchAgent(){
   } catch(err){
     removeMessage(loadingId);
     addMessage(`❌ Error: ${err.message || err}`, "ai");
+  }
+}
+
+async function runValidationToolkit(){
+  if(!activeProject) return;
+
+  const loadingId = addMessage(`⏳ Validation Toolkit is analyzing <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
+  trackEvent("validation_toolkit_run", { idea_title: activeProject.title });
+
+  try{
+    let res = await fetch("https://skill2income-api.onrender.com/validation-toolkit", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        idea_title: activeProject.title || "",
+        idea_description: activeProject.description || "",
+        history: messages.map(m => ({
+          role: m.role,
+          text: getHistoryText(m)
+        }))
+      })
+    });
+
+    if(!res.ok){
+      res = await fetch("https://skill2income-api.onrender.com/generate-income-plan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          request_type: "validation_toolkit",
+          idea_title: activeProject.title || "",
+          idea_description: activeProject.description || "",
+          interests: activeProject.title || "",
+          history: messages.map(m => ({
+            role: m.role,
+            text: getHistoryText(m)
+          }))
+        })
+      });
+    }
+
+    if(!res.ok){
+      removeMessage(loadingId);
+      addMessage(`❌ Validation Toolkit could not finish. Server returned ${res.status}.`, "ai");
+      trackEvent("validation_toolkit_failed", { idea_title: activeProject.title, error: `Server returned ${res.status}` });
+      return;
+    }
+
+    const data = await res.json();
+    const toolkit = data?.result;
+    if(!toolkit || Array.isArray(toolkit)){
+      removeMessage(loadingId);
+      addMessage("⚠️ Validation Toolkit response format not supported.", "ai");
+      trackEvent("validation_toolkit_failed", { idea_title: activeProject.title, error: "Unsupported response format" });
+      return;
+    }
+
+    removeMessage(loadingId);
+
+    activeProject.validation_toolkit = toolkit;
+    activeProject.progress = activeProject.progress || {};
+    activeProject.progress.validation_completed = true;
+    saveActiveProjectToStore(activeProject);
+    renderActiveProjectPanel();
+
+    const html = renderValidationToolkit(toolkit, activeProject.title || "Validation Toolkit");
+    addMessage(html, "ai");
+    messages.push({
+      role: "ai",
+      text: html,
+      historyText: JSON.stringify({ validation_toolkit_for: activeProject.title, result: toolkit })
+    });
+    saveChat();
+    trackEvent("validation_toolkit_succeeded", { idea_title: activeProject.title, score: toolkit?.validation_score?.score || "" });
+  } catch(err){
+    removeMessage(loadingId);
+    const errorText = err.message || String(err);
+    addMessage(`❌ Validation Toolkit failed: ${escapeHtml(errorText)}`, "ai");
+    trackEvent("validation_toolkit_failed", { idea_title: activeProject.title, error: errorText });
   }
 }
 
@@ -1450,6 +1539,50 @@ function renderCoachReply(coach, ideaTitle){
   `;
 }
 
+function renderValidationToolkit(plan, ideaTitle){
+  const pains = Array.isArray(plan.pains_to_confirm) ? plan.pains_to_confirm : [];
+  const competitors = Array.isArray(plan.competitor_snapshot) ? plan.competitor_snapshot : [];
+  const questions = Array.isArray(plan.outreach_questions) ? plan.outreach_questions : [];
+  const greenFlags = Array.isArray(plan.green_flags) ? plan.green_flags : [];
+  const redFlags = Array.isArray(plan.red_flags) ? plan.red_flags : [];
+  const nextActions = Array.isArray(plan.next_actions) ? plan.next_actions : [];
+  const score = plan.validation_score || {};
+
+  return `
+    <div style="margin-bottom:15px; padding:15px; background:#071a16; border:2px solid #2dd4bf; border-radius:12px;">
+      <div style="color:#2dd4bf; font-weight:bold; margin-bottom:8px;">Validation Toolkit</div>
+      <h3 style="color:#99f6e4;">${escapeHtml(ideaTitle)}</h3>
+      <p><b>Validation summary:</b><br>${escapeHtml(plan.validation_summary || "")}</p>
+      <p><b>Validation score:</b> ${escapeHtml(score.label || "Unknown")} (${escapeHtml(String(score.score || ""))}/10)${score.reason ? ` - ${escapeHtml(score.reason)}` : ""}</p>
+      <p><b>Target customer:</b><br>${escapeHtml(plan.target_customer || "")}</p>
+      <p><b>3 pain points to confirm:</b></p>
+      <ol>
+        ${pains.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ol>
+      <p><b>Competitor snapshot:</b></p>
+      <ul>
+        ${competitors.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+      <p><b>5 customer validation questions:</b></p>
+      <ol>
+        ${questions.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ol>
+      <p><b>Green flags:</b></p>
+      <ul>
+        ${greenFlags.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+      <p><b>Red flags:</b></p>
+      <ul>
+        ${redFlags.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+      <p><b>Next actions:</b></p>
+      <ol>
+        ${nextActions.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ol>
+    </div>
+  `;
+}
+
 function renderLaunchAgent(plan, ideaTitle){
   const launchDays = Array.isArray(plan.seven_day_plan) ? plan.seven_day_plan : [];
   const landing = plan.landing_page_copy || {};
@@ -1491,36 +1624,28 @@ function normalizeServiceNowRecordUrl(result){
 }
 
 function renderServiceNowResult(result, ideaTitle){
-  const safeUrl = normalizeServiceNowRecordUrl(result);
-  const recordUrl = safeUrl
-    ? `<p><b>Record URL:</b><br><a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(safeUrl)}</a></p>`
-    : "";
-
   return `
     <div style="margin-bottom:15px; padding:15px; background:#07261e; border:2px solid #14b8a6; border-radius:12px;">
       <div style="color:#14b8a6; font-weight:bold; margin-bottom:8px;">ServiceNow Export</div>
       <h3 style="color:#99f6e4;">${escapeHtml(ideaTitle)}</h3>
       <p><b>Table:</b> ${escapeHtml(result?.table || "incident")}</p>
       <p><b>Record Number:</b> ${escapeHtml(result?.number || "Created")}</p>
+      <p><b>Status:</b> ${escapeHtml(result?.status || "Submitted")}</p>
       <p><b>Record Title:</b><br>${escapeHtml(result?.display || ideaTitle)}</p>
-      ${recordUrl}
+      <p style="color:#99f6e4;"><b>Support note:</b> This request has been created in our internal support system. End users do not need a ServiceNow login to continue.</p>
     </div>
   `;
 }
 
 function renderIssueResult(result, issueTitle){
-  const safeUrl = normalizeServiceNowRecordUrl(result);
-  const recordUrl = safeUrl
-    ? `<p><b>Record URL:</b><br><a href="${escapeHtml(safeUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(safeUrl)}</a></p>`
-    : "";
-
   return `
     <div style="margin-bottom:15px; padding:15px; background:#2a1608; border:2px solid #fb923c; border-radius:12px;">
       <div style="color:#fb923c; font-weight:bold; margin-bottom:8px;">Issue Reported</div>
       <h3 style="color:#fdba74;">${escapeHtml(issueTitle)}</h3>
       <p><b>Ticket Number:</b> ${escapeHtml(result?.number || "Created")}</p>
       <p><b>Table:</b> ${escapeHtml(result?.table || "incident")}</p>
-      ${recordUrl}
+      <p><b>Status:</b> ${escapeHtml(result?.status || "Submitted")}</p>
+      <p style="color:#fdba74;"><b>Support note:</b> This ticket is stored in our internal ServiceNow system. Users do not need a ServiceNow login to submit or track support through this app.</p>
     </div>
   `;
 }
