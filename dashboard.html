@@ -85,6 +85,14 @@ body { font-family:'Inter'; background:#020617; color:white; margin:0; }
   padding:12px 0;
 }
 
+.active-project-card {
+  background:#07121f;
+  border:1px solid #1e293b;
+  border-radius:12px;
+  padding:16px;
+  margin-bottom:24px;
+}
+
 .card {
   background:#111827;
   padding:15px;
@@ -140,6 +148,11 @@ button {
     <div id="topIdeas" class="empty-state">No analytics data yet.</div>
   </div>
 
+  <div class="active-project-card">
+    <h3 style="margin-top:0;">Active Project</h3>
+    <div id="activeProjectSummary" class="empty-state">No active project yet.</div>
+  </div>
+
   <h3 class="section-title">Saved Plans</h3>
   <div id="plans" class="container"></div>
 </div>
@@ -158,11 +171,39 @@ const db = firebase.firestore();
 auth.onAuthStateChanged(user=>{
   if(user){
     loadAnalytics();
+    loadActiveProject();
     loadPlans();
   } else {
     alert("Login required");
   }
 });
+
+function loadActiveProject(){
+  db.collection("users").doc(auth.currentUser.uid)
+  .collection("workspace").doc("current_project")
+  .get()
+  .then(doc => {
+    const mount = document.getElementById("activeProjectSummary");
+    if(!doc.exists){
+      mount.innerHTML = "No active project set yet.";
+      return;
+    }
+
+    const project = doc.data();
+    const progress = project.progress || {};
+    const done = Object.values(progress).filter(Boolean).length;
+    const total = Object.keys(progress).length || 5;
+
+    mount.innerHTML = `
+      <h4 style="color:#22c55e; margin:0 0 8px 0;">${project.title || "Untitled project"}</h4>
+      <p style="margin:0 0 8px 0; color:#cbd5e1;">${project.current_goal || project.description || ""}</p>
+      <p style="margin:0; color:#38bdf8;"><b>Progress:</b> ${done}/${total} milestones complete</p>
+    `;
+  })
+  .catch(err => {
+    console.error("active project summary error", err);
+  });
+}
 
 function loadAnalytics(){
   db.collection("analytics_events")

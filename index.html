@@ -41,6 +41,21 @@ body { margin:0; font-family:'Inter'; background:#020617; color:white;}
 .chat-container { flex:1; display:flex; flex-direction:column;}
 .top-bar { padding:12px; border-bottom:1px solid #1e293b;}
 .chat-box { flex:1; padding:20px; overflow:auto;}
+.active-project-wrap { padding:14px 20px; border-bottom:1px solid #1e293b; background:#06111f; }
+.active-project-card { background:#0f172a; border:1px solid #1e293b; border-radius:14px; padding:16px; }
+.project-header { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+.project-title { color:#22c55e; font-size:18px; font-weight:600; margin:0 0 6px 0; }
+.project-subtitle { color:#94a3b8; margin:0; font-size:13px; }
+.project-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+.project-tabs { display:flex; gap:8px; flex-wrap:wrap; margin:14px 0 12px 0; }
+.project-tab { background:#111827; color:white; border:none; border-radius:999px; padding:8px 12px; cursor:pointer; }
+.project-tab.active { background:#2563eb; }
+.project-content { background:#020617; border:1px solid #1f2937; border-radius:12px; padding:14px; }
+.project-checklist label { display:block; margin:8px 0; color:#cbd5e1; }
+.project-checklist input { margin-right:8px; }
+.project-assets { color:#cbd5e1; }
+.project-assets pre { white-space:pre-wrap; background:#111827; padding:10px; border-radius:10px; border:1px solid #1f2937; }
+.project-empty { color:#94a3b8; font-size:14px; }
 
 .chat-item span:first-child { flex: 1;  cursor: pointer;
 }
@@ -119,6 +134,7 @@ a { color:#60a5fa; text-decoration:underline; }
 
 <div class="chat-container">
 <div class="top-bar">🚀 Skill2Income AI</div>
+<div id="activeProjectMount" class="active-project-wrap"></div>
 
 <div id="chat" class="chat-box"></div>
 
@@ -145,11 +161,14 @@ const db = firebase.firestore();
 const chat = document.getElementById("chat");
 const sidebar = document.getElementById("sidebar");
 const userInput = document.getElementById("userInput");
+const activeProjectMount = document.getElementById("activeProjectMount");
 
 let currentChatId=null;
 let messages=[];
 let currentPlans=[];
 let selectedCoachIdea=null;
+let activeProject=null;
+let activeProjectTab="overview";
 const analyticsSessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 function getHistoryText(message){
@@ -189,7 +208,10 @@ function login(){
 auth.onAuthStateChanged(user => {
   if (user) {
     loadChatList();
+    loadActiveProject();
   } else {
+    activeProject = null;
+    renderActiveProjectPanel();
     sidebar.innerHTML = `
       <button id="loginBtn" onclick="login()">🔐 Login</button>
     `;
@@ -340,6 +362,186 @@ function trackEvent(eventName, metadata = {}){
   });
 }
 
+function getProjectChecklist(){
+  return [
+    { key: "idea_selected", label: "Idea selected" },
+    { key: "execution_plan_opened", label: "Execution plan opened" },
+    { key: "first_offer_written", label: "First offer written" },
+    { key: "first_outreach_sent", label: "First outreach sent" },
+    { key: "first_customer_contacted", label: "First customer contacted" }
+  ];
+}
+
+function buildProjectAssets(project){
+  const title = project?.title || "your idea";
+  const audience = project?.who_is_this_for || "a narrow niche customer";
+  return {
+    outreach: `Hi [Name], I am building ${title} for ${audience}. I noticed teams like yours often struggle with [specific pain point]. Would you be open to a 15-minute chat so I can show a simple version and get feedback?`,
+    landing: `Headline: Launch ${title} faster\nSubheadline: A focused solution for ${audience} who need a better way to handle this workflow.\nCTA: Book an early access demo`,
+    offer: `First offer: I will set up the first version of ${title} for one niche customer, with onboarding support and a feedback loop, in exchange for an early pilot fee.`
+  };
+}
+
+function renderActiveProjectPanel(){
+  if(!activeProject){
+    activeProjectMount.innerHTML = `
+      <div class="active-project-card">
+        <div class="project-empty">No active project yet. Pick an idea card and click <b>Set Active Project</b> to turn it into a reusable workspace.</div>
+      </div>
+    `;
+    return;
+  }
+
+  const checklist = getProjectChecklist();
+  const progressDone = checklist.filter(item => activeProject.progress?.[item.key]).length;
+  const assets = buildProjectAssets(activeProject);
+  let contentHtml = "";
+
+  if(activeProjectTab === "overview"){
+    contentHtml = `
+      <p><b>Why it works:</b><br>${escapeHtml(activeProject.why_it_works || activeProject.description || "")}</p>
+      <p><b>Who it serves:</b><br>${escapeHtml(activeProject.who_is_this_for || "A focused target customer")}</p>
+      <p><b>Current goal:</b><br>${escapeHtml(activeProject.current_goal || "Validate the smallest version and get the first customer conversation.")}</p>
+    `;
+  } else if(activeProjectTab === "progress"){
+    contentHtml = `
+      <div class="project-checklist">
+        ${checklist.map(item => `
+          <label>
+            <input type="checkbox" ${activeProject.progress?.[item.key] ? "checked" : ""} onchange="toggleProjectTask('${item.key}')">
+            ${item.label}
+          </label>
+        `).join("")}
+      </div>
+      <p style="color:#38bdf8; margin-top:10px;"><b>Progress:</b> ${progressDone}/${checklist.length} milestones completed</p>
+    `;
+  } else {
+    contentHtml = `
+      <div class="project-assets">
+        <p><b>Outreach template</b></p>
+        <pre>${escapeHtml(assets.outreach)}</pre>
+        <p><b>Landing page copy</b></p>
+        <pre>${escapeHtml(assets.landing)}</pre>
+        <p><b>First offer script</b></p>
+        <pre>${escapeHtml(assets.offer)}</pre>
+      </div>
+    `;
+  }
+
+  activeProjectMount.innerHTML = `
+    <div class="active-project-card">
+      <div class="project-header">
+        <div>
+          <p class="project-subtitle">Active Project</p>
+          <h3 class="project-title">${escapeHtml(activeProject.title || "Untitled idea")}</h3>
+          <p class="project-subtitle">Resume this idea instead of starting from scratch.</p>
+        </div>
+        <div style="text-align:right; color:#94a3b8; font-size:13px;">${progressDone}/${checklist.length} milestones done</div>
+      </div>
+      <div class="project-actions">
+        <button class="project-tab" onclick="continueActiveCoach()">Continue with AI Coach</button>
+        <button class="project-tab" onclick="setInputValue(activeProject.title || '')">Reuse in Chat</button>
+        <button class="project-tab" onclick="clearActiveProject()">Clear Project</button>
+      </div>
+      <div class="project-tabs">
+        <button class="project-tab ${activeProjectTab === "overview" ? "active" : ""}" onclick="switchProjectTab('overview')">Overview</button>
+        <button class="project-tab ${activeProjectTab === "progress" ? "active" : ""}" onclick="switchProjectTab('progress')">Progress</button>
+        <button class="project-tab ${activeProjectTab === "assets" ? "active" : ""}" onclick="switchProjectTab('assets')">Assets</button>
+      </div>
+      <div class="project-content">${contentHtml}</div>
+    </div>
+  `;
+}
+
+function switchProjectTab(tab){
+  activeProjectTab = tab;
+  renderActiveProjectPanel();
+}
+
+function saveActiveProjectToStore(project){
+  if(!auth.currentUser) return Promise.resolve();
+  return db.collection("users").doc(auth.currentUser.uid)
+    .collection("workspace").doc("current_project")
+    .set({
+      ...project,
+      updatedAt: new Date()
+    }, { merge: true });
+}
+
+function loadActiveProject(){
+  if(!auth.currentUser) return;
+  db.collection("users").doc(auth.currentUser.uid)
+    .collection("workspace").doc("current_project")
+    .get()
+    .then(doc => {
+      activeProject = doc.exists ? doc.data() : null;
+      renderActiveProjectPanel();
+    })
+    .catch(err => {
+      console.error("active project load error", err);
+      renderActiveProjectPanel();
+    });
+}
+
+function setActiveProject(index){
+  const idea = currentPlans[index];
+  if(!idea || !auth.currentUser) return;
+
+  activeProject = {
+    title: idea.title || "",
+    description: idea.description || "",
+    who_is_this_for: idea.who_is_this_for || "",
+    why_it_works: idea.why_it_works || "",
+    current_goal: `Validate ${idea.title || "this idea"} with a narrow audience and get the first real customer conversation.`,
+    progress: {
+      idea_selected: true,
+      execution_plan_opened: false,
+      first_offer_written: false,
+      first_outreach_sent: false,
+      first_customer_contacted: false
+    },
+    createdAt: new Date(),
+    updatedAt: new Date()
+  };
+
+  activeProjectTab = "overview";
+  renderActiveProjectPanel();
+  saveActiveProjectToStore(activeProject);
+  trackEvent("active_project_set", { idea_title: idea.title });
+}
+
+function toggleProjectTask(taskKey){
+  if(!activeProject) return;
+  activeProject.progress = activeProject.progress || {};
+  activeProject.progress[taskKey] = !activeProject.progress[taskKey];
+  renderActiveProjectPanel();
+  saveActiveProjectToStore(activeProject);
+  trackEvent("active_project_progress_updated", { idea_title: activeProject.title, task: taskKey, value: activeProject.progress[taskKey] });
+}
+
+function continueActiveCoach(){
+  if(!activeProject) return;
+  selectedCoachIdea = {
+    title: activeProject.title || "",
+    description: activeProject.description || ""
+  };
+  trackEvent("active_project_continue_coach", { idea_title: activeProject.title });
+  setInputValue(`Help me move forward with ${activeProject.title}`);
+}
+
+function clearActiveProject(){
+  if(!auth.currentUser) return;
+  const title = activeProject?.title || null;
+  activeProject = null;
+  selectedCoachIdea = null;
+  renderActiveProjectPanel();
+  db.collection("users").doc(auth.currentUser.uid)
+    .collection("workspace").doc("current_project")
+    .delete()
+    .catch(err => console.error("clear active project error", err));
+  trackEvent("active_project_cleared", { idea_title: title });
+}
+
 // QUICK FILL
 function quickFill(text){
  userInput.value=text;
@@ -377,15 +579,16 @@ async function sendMessage(){
 
   if(!currentChatId) await newChat();
 
-  addMessage(text,"user");
-  messages.push({role:"user",text});
-  userInput.value="";
-
   if(selectedCoachIdea){
     trackEvent("ai_coach_used", { idea_title: selectedCoachIdea.title, prompt: text });
     await sendCoachMessage(text);
+    sendBtn.disabled = false;
     return;
   }
+
+  addMessage(text,"user");
+  messages.push({role:"user",text});
+  userInput.value="";
 
   const loadingId = addMessage("⏳ Thinking... generating your plan","ai");
   trackEvent("generate_ideas", { prompt: text });
@@ -552,6 +755,9 @@ ${p.personal_reason || "Based on your interests and skills"}
       <button onclick="startCoachMode(${i})" style="padding:8px 12px; border:none; border-radius:8px; background:#22c55e; color:#020617; font-weight:600; cursor:pointer; margin-left:8px;">
         AI Coach Mode
       </button>
+      <button onclick="setActiveProject(${i})" style="padding:8px 12px; border:none; border-radius:8px; background:#facc15; color:#020617; font-weight:600; cursor:pointer; margin-left:8px;">
+        Set Active Project
+      </button>
     </div>
 
     <p>🔗 <b>Start Here:</b><br>${getSmartLinks(p.title)}</p>
@@ -673,6 +879,7 @@ function exportPDF(btn){
   html2pdf().from(card).save("plan.pdf");
 }
 window.onload = () => {
+  renderActiveProjectPanel();
   const text = localStorage.getItem("reuseText");
   if(text){
     document.getElementById("userInput").value = text;
@@ -727,6 +934,12 @@ function startCoachMode(index){
     title: idea.title || "",
     description: idea.description || ""
   };
+  if(activeProject && activeProject.title === idea.title){
+    activeProject.progress = activeProject.progress || {};
+    activeProject.progress.idea_selected = true;
+    saveActiveProjectToStore(activeProject);
+    renderActiveProjectPanel();
+  }
 
   const html = `
     <div style="margin-bottom:15px; padding:15px; background:#052e16; border:2px solid #22c55e; border-radius:12px;">
@@ -824,6 +1037,12 @@ async function generateExecutionPlan(index){
 
   trackEvent("select_idea", { idea_title: idea.title, entry_point: "execution_plan" });
   trackEvent("execution_plan_clicked", { idea_title: idea.title });
+  if(activeProject && activeProject.title === idea.title){
+    activeProject.progress = activeProject.progress || {};
+    activeProject.progress.execution_plan_opened = true;
+    saveActiveProjectToStore(activeProject);
+    renderActiveProjectPanel();
+  }
 
   const loadingId = addMessage(`⏳ Building execution plan for <b>${escapeHtml(idea.title)}</b>...`, "ai");
 
