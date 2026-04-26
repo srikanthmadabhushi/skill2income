@@ -56,6 +56,11 @@ body { margin:0; font-family:'Inter'; background:#020617; color:white;}
 .project-assets { color:#cbd5e1; }
 .project-assets pre { white-space:pre-wrap; background:#111827; padding:10px; border-radius:10px; border:1px solid #1f2937; }
 .project-empty { color:#94a3b8; font-size:14px; }
+.modal-backdrop { position:fixed; inset:0; background:rgba(2,6,23,0.78); display:none; align-items:center; justify-content:center; z-index:10000; padding:16px; }
+.modal-card { width:min(520px, 100%); background:#0f172a; border:1px solid #1e293b; border-radius:14px; padding:18px; }
+.modal-card h3 { margin-top:0; }
+.modal-card input, .modal-card textarea, .modal-card select { width:100%; box-sizing:border-box; margin-top:8px; margin-bottom:12px; padding:10px; border-radius:8px; border:none; background:#111827; color:white; }
+.modal-actions { display:flex; gap:10px; justify-content:flex-end; }
 
 .chat-item span:first-child { flex: 1;  cursor: pointer;
 }
@@ -147,6 +152,24 @@ a { color:#60a5fa; text-decoration:underline; }
 </div>
 </div>
 
+<div id="issueModal" class="modal-backdrop">
+  <div class="modal-card">
+    <h3>Report an Issue</h3>
+    <input id="issueTitle" placeholder="Issue title">
+    <textarea id="issueDescription" rows="5" placeholder="Describe what happened and what you expected."></textarea>
+    <select id="issueSeverity">
+      <option>Low</option>
+      <option selected>Medium</option>
+      <option>High</option>
+    </select>
+    <input id="issueFeature" placeholder="Feature name (for example: AI Coach, Launch Agent, Sidebar)">
+    <div class="modal-actions">
+      <button class="project-tab" onclick="closeIssueModal()">Cancel</button>
+      <button class="project-tab" onclick="submitIssueReport()">Send to ServiceNow</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const firebaseConfig = {
   apiKey:"AIzaSyBUdYVcFTTm2DlmKZJG9_t6Vdu2_P3MuIg",
@@ -162,6 +185,7 @@ const chat = document.getElementById("chat");
 const sidebar = document.getElementById("sidebar");
 const userInput = document.getElementById("userInput");
 const activeProjectMount = document.getElementById("activeProjectMount");
+const issueModal = document.getElementById("issueModal");
 
 let currentChatId=null;
 let messages=[];
@@ -265,6 +289,7 @@ function loadChatList(){
   sidebar.innerHTML = `
   <button onclick="newChat()">➕ New Chat</button>
   <button onclick="goDashboard()">📊 Saved Plans</button>
+  <button onclick="openIssueModal()">🛠 Report Issue</button>
 
   <button id="logoutBtn" onclick="logout()">🚪 Logout</button>
 
@@ -354,6 +379,14 @@ function escapeHtml(text){
 function setInputValue(text){
   userInput.value = text || "";
   userInput.focus();
+}
+
+function openIssueModal(){
+  issueModal.style.display = "flex";
+}
+
+function closeIssueModal(){
+  issueModal.style.display = "none";
 }
 
 function trackEvent(eventName, metadata = {}){
@@ -466,6 +499,7 @@ function renderActiveProjectPanel(){
       <div class="project-actions">
         <button class="project-tab" onclick="continueActiveCoach()">Continue with AI Coach</button>
         <button class="project-tab" onclick="runLaunchAgent()">Run Launch Agent</button>
+        <button class="project-tab" onclick="pushToServiceNow()">Push to ServiceNow</button>
         <button class="project-tab" onclick="reuseActiveProjectInChat()">Reuse in Chat</button>
         <button class="project-tab" onclick="clearActiveProject()">Clear Project</button>
       </div>
@@ -654,6 +688,109 @@ async function runLaunchAgent(){
   } catch(err){
     removeMessage(loadingId);
     addMessage(`❌ Error: ${err.message || err}`, "ai");
+  }
+}
+
+async function pushToServiceNow(){
+  if(!activeProject) return;
+
+  const loadingId = addMessage(`⏳ Sending <b>${escapeHtml(activeProject.title)}</b> to ServiceNow...`, "ai");
+  trackEvent("servicenow_export_started", { idea_title: activeProject.title });
+
+  try{
+    const res = await fetch("https://skill2income-api.onrender.com/servicenow/export", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        table_name: "incident",
+        project: activeProject
+      })
+    });
+
+    const data = await res.json();
+    removeMessage(loadingId);
+
+    if(!res.ok || data?.error){
+      addMessage(`❌ ServiceNow export failed: ${escapeHtml(data?.error || `Server returned ${res.status}`)}`, "ai");
+      trackEvent("servicenow_export_failed", { idea_title: activeProject.title, error: data?.error || `status_${res.status}` });
+      return;
+    }
+
+    const html = renderServiceNowResult(data.result || {}, activeProject.title || "Active Project");
+    addMessage(html, "ai");
+    messages.push({
+      role: "ai",
+      text: html,
+      historyText: JSON.stringify({ servicenow_export_for: activeProject.title, result: data.result })
+    });
+    saveChat();
+    trackEvent("servicenow_export_succeeded", { idea_title: activeProject.title, number: data?.result?.number || "" });
+  } catch(err){
+    removeMessage(loadingId);
+    addMessage(`❌ ServiceNow export failed: ${escapeHtml(err.message || String(err))}`, "ai");
+    trackEvent("servicenow_export_failed", { idea_title: activeProject.title, error: err.message || String(err) });
+  }
+}
+
+async function submitIssueReport(){
+  const title = document.getElementById("issueTitle").value.trim();
+  const description = document.getElementById("issueDescription").value.trim();
+  const severity = document.getElementById("issueSeverity").value;
+  const feature = document.getElementById("issueFeature").value.trim();
+
+  if(!title){
+    alert("Please enter an issue title.");
+    return;
+  }
+
+  closeIssueModal();
+  const loadingId = addMessage("⏳ Sending issue to ServiceNow...", "ai");
+  trackEvent("servicenow_issue_started", { title, severity, feature });
+
+  try{
+    const res = await fetch("https://skill2income-api.onrender.com/servicenow/report-issue", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        table_name: "incident",
+        issue: {
+          title,
+          description,
+          severity,
+          feature,
+          user_email: auth.currentUser?.email || "",
+          chat_id: currentChatId || "",
+          active_project: activeProject?.title || ""
+        }
+      })
+    });
+
+    const data = await res.json();
+    removeMessage(loadingId);
+
+    if(!res.ok || data?.error){
+      addMessage(`❌ Issue could not be created: ${escapeHtml(data?.error || `Server returned ${res.status}`)}`, "ai");
+      trackEvent("servicenow_issue_failed", { title, error: data?.error || `status_${res.status}` });
+      return;
+    }
+
+    const html = renderIssueResult(data.result || {}, title);
+    addMessage(html, "ai");
+    messages.push({
+      role: "ai",
+      text: html,
+      historyText: JSON.stringify({ servicenow_issue_title: title, result: data.result })
+    });
+    saveChat();
+    trackEvent("servicenow_issue_succeeded", { title, number: data?.result?.number || "" });
+  } catch(err){
+    removeMessage(loadingId);
+    addMessage(`❌ Issue could not be created: ${escapeHtml(err.message || String(err))}`, "ai");
+    trackEvent("servicenow_issue_failed", { title, error: err.message || String(err) });
   }
 }
 
@@ -1316,6 +1453,39 @@ function renderLaunchAgent(plan, ideaTitle){
       <ol>
         ${launchDays.map(day => `<li>${escapeHtml(day)}</li>`).join("")}
       </ol>
+    </div>
+  `;
+}
+
+function renderServiceNowResult(result, ideaTitle){
+  const recordUrl = result?.url
+    ? `<p><b>Record URL:</b><br><a href="${escapeHtml(result.url)}" target="_blank">${escapeHtml(result.url)}</a></p>`
+    : "";
+
+  return `
+    <div style="margin-bottom:15px; padding:15px; background:#07261e; border:2px solid #14b8a6; border-radius:12px;">
+      <div style="color:#14b8a6; font-weight:bold; margin-bottom:8px;">ServiceNow Export</div>
+      <h3 style="color:#99f6e4;">${escapeHtml(ideaTitle)}</h3>
+      <p><b>Table:</b> ${escapeHtml(result?.table || "incident")}</p>
+      <p><b>Record Number:</b> ${escapeHtml(result?.number || "Created")}</p>
+      <p><b>Record Title:</b><br>${escapeHtml(result?.display || ideaTitle)}</p>
+      ${recordUrl}
+    </div>
+  `;
+}
+
+function renderIssueResult(result, issueTitle){
+  const recordUrl = result?.url
+    ? `<p><b>Record URL:</b><br><a href="${escapeHtml(result.url)}" target="_blank">${escapeHtml(result.url)}</a></p>`
+    : "";
+
+  return `
+    <div style="margin-bottom:15px; padding:15px; background:#2a1608; border:2px solid #fb923c; border-radius:12px;">
+      <div style="color:#fb923c; font-weight:bold; margin-bottom:8px;">Issue Reported</div>
+      <h3 style="color:#fdba74;">${escapeHtml(issueTitle)}</h3>
+      <p><b>Ticket Number:</b> ${escapeHtml(result?.number || "Created")}</p>
+      <p><b>Table:</b> ${escapeHtml(result?.table || "incident")}</p>
+      ${recordUrl}
     </div>
   `;
 }
