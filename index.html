@@ -57,9 +57,12 @@ body { margin:0; font-family:'Inter'; background:#020617; color:white;}
 .project-assets pre { white-space:pre-wrap; background:#111827; padding:10px; border-radius:10px; border:1px solid #1f2937; }
 .project-empty { color:#94a3b8; font-size:14px; }
 .modal-backdrop { position:fixed; inset:0; background:rgba(2,6,23,0.78); display:none; align-items:center; justify-content:center; z-index:10000; padding:16px; }
-.modal-card { width:min(520px, 100%); background:#0f172a; border:1px solid #1e293b; border-radius:14px; padding:18px; }
+.modal-card { width:min(520px, 100%); background:#0b1220; border:1px solid #334155; border-radius:14px; padding:18px; box-shadow:0 18px 50px rgba(0,0,0,0.45); }
 .modal-card h3 { margin-top:0; }
-.modal-card input, .modal-card textarea, .modal-card select { width:100%; box-sizing:border-box; margin-top:8px; margin-bottom:12px; padding:10px; border-radius:8px; border:none; background:#111827; color:white; }
+.modal-label { display:block; color:#cbd5e1; font-size:13px; font-weight:600; margin:10px 0 6px 0; }
+.modal-card input, .modal-card textarea, .modal-card select { width:100%; box-sizing:border-box; margin-top:0; margin-bottom:12px; padding:12px; border-radius:10px; border:1px solid #475569; background:#111827; color:white; outline:none; }
+.modal-card input::placeholder, .modal-card textarea::placeholder { color:#94a3b8; }
+.modal-card input:focus, .modal-card textarea:focus, .modal-card select:focus { border-color:#38bdf8; box-shadow:0 0 0 3px rgba(56,189,248,0.18); }
 .modal-actions { display:flex; gap:10px; justify-content:flex-end; }
 
 .chat-item span:first-child { flex: 1;  cursor: pointer;
@@ -155,14 +158,18 @@ a { color:#60a5fa; text-decoration:underline; }
 <div id="issueModal" class="modal-backdrop">
   <div class="modal-card">
     <h3>Report an Issue</h3>
-    <input id="issueTitle" placeholder="Issue title">
-    <textarea id="issueDescription" rows="5" placeholder="Describe what happened and what you expected."></textarea>
+    <label class="modal-label" for="issueTitle">Issue Title</label>
+    <input id="issueTitle" placeholder="Example: Launch Agent button is failing">
+    <label class="modal-label" for="issueDescription">Issue Description</label>
+    <textarea id="issueDescription" rows="5" placeholder="Describe what happened, what you expected, and any steps to reproduce the issue."></textarea>
+    <label class="modal-label" for="issueSeverity">Severity</label>
     <select id="issueSeverity">
       <option>Low</option>
       <option selected>Medium</option>
       <option>High</option>
     </select>
-    <input id="issueFeature" placeholder="Feature name (for example: AI Coach, Launch Agent, Sidebar)">
+    <label class="modal-label" for="issueFeature">Feature / Area</label>
+    <input id="issueFeature" placeholder="Example: AI Coach, Launch Agent, Sidebar">
     <div class="modal-actions">
       <button class="project-tab" onclick="closeIssueModal()">Cancel</button>
       <button class="project-tab" onclick="submitIssueReport()">Send to ServiceNow</button>
@@ -387,6 +394,14 @@ function openIssueModal(){
 
 function closeIssueModal(){
   issueModal.style.display = "none";
+}
+
+function getFriendlyServiceNowError(errorText){
+  const text = String(errorText || "");
+  if(text.includes("ServiceNow credentials are not configured on the backend.")){
+    return "ServiceNow backend credentials are missing. Add SERVICENOW_INSTANCE, SERVICENOW_USERNAME, and SERVICENOW_PASSWORD to your backend environment and redeploy.";
+  }
+  return text;
 }
 
 function trackEvent(eventName, metadata = {}){
@@ -713,8 +728,9 @@ async function pushToServiceNow(){
     removeMessage(loadingId);
 
     if(!res.ok || data?.error){
-      addMessage(`❌ ServiceNow export failed: ${escapeHtml(data?.error || `Server returned ${res.status}`)}`, "ai");
-      trackEvent("servicenow_export_failed", { idea_title: activeProject.title, error: data?.error || `status_${res.status}` });
+      const errorText = getFriendlyServiceNowError(data?.error || `Server returned ${res.status}`);
+      addMessage(`❌ ServiceNow export failed: ${escapeHtml(errorText)}`, "ai");
+      trackEvent("servicenow_export_failed", { idea_title: activeProject.title, error: errorText });
       return;
     }
 
@@ -729,8 +745,9 @@ async function pushToServiceNow(){
     trackEvent("servicenow_export_succeeded", { idea_title: activeProject.title, number: data?.result?.number || "" });
   } catch(err){
     removeMessage(loadingId);
-    addMessage(`❌ ServiceNow export failed: ${escapeHtml(err.message || String(err))}`, "ai");
-    trackEvent("servicenow_export_failed", { idea_title: activeProject.title, error: err.message || String(err) });
+    const errorText = getFriendlyServiceNowError(err.message || String(err));
+    addMessage(`❌ ServiceNow export failed: ${escapeHtml(errorText)}`, "ai");
+    trackEvent("servicenow_export_failed", { idea_title: activeProject.title, error: errorText });
   }
 }
 
@@ -773,8 +790,9 @@ async function submitIssueReport(){
     removeMessage(loadingId);
 
     if(!res.ok || data?.error){
-      addMessage(`❌ Issue could not be created: ${escapeHtml(data?.error || `Server returned ${res.status}`)}`, "ai");
-      trackEvent("servicenow_issue_failed", { title, error: data?.error || `status_${res.status}` });
+      const errorText = getFriendlyServiceNowError(data?.error || `Server returned ${res.status}`);
+      addMessage(`❌ Issue could not be created: ${escapeHtml(errorText)}`, "ai");
+      trackEvent("servicenow_issue_failed", { title, error: errorText });
       return;
     }
 
@@ -789,8 +807,9 @@ async function submitIssueReport(){
     trackEvent("servicenow_issue_succeeded", { title, number: data?.result?.number || "" });
   } catch(err){
     removeMessage(loadingId);
-    addMessage(`❌ Issue could not be created: ${escapeHtml(err.message || String(err))}`, "ai");
-    trackEvent("servicenow_issue_failed", { title, error: err.message || String(err) });
+    const errorText = getFriendlyServiceNowError(err.message || String(err));
+    addMessage(`❌ Issue could not be created: ${escapeHtml(errorText)}`, "ai");
+    trackEvent("servicenow_issue_failed", { title, error: errorText });
   }
 }
 
