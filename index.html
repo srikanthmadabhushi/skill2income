@@ -944,11 +944,9 @@ function loadChatList(){
    const user=auth.currentUser;
   
    db.collection("users").doc(user.uid)
-   .collection("chats").orderBy("createdAt","desc")
-   .get().then(snapshot=>{
+  .collection("chats").orderBy("createdAt","desc")
+  .get().then(snapshot=>{
     if(snapshot.empty){
-      clearCurrentChatView(false);
-    } else if(currentChatId && !snapshot.docs.some(doc => doc.id === currentChatId)){
       clearCurrentChatView(false);
     }
   
@@ -1040,7 +1038,7 @@ function addMessage(text,type){
     return id; // 🔥 IMPORTANT
   }
 
-  function clearCurrentChatView(showExample = false){
+function clearCurrentChatView(showExample = false){
     currentChatId = null;
     messages = [];
     currentPlans = [];
@@ -1051,6 +1049,33 @@ function addMessage(text,type){
       addMessage("💡 Example: I know Python, want automation ideas for healthcare clinics","ai");
     }
   }
+
+function getProjectRunCount(type){
+  if(!activeProject || !Array.isArray(activeProject.timeline)) return 0;
+  return activeProject.timeline.filter(item => item && item.type === type).length;
+}
+
+function getPreviousWorkflowResult(type){
+  if(!activeProject) return null;
+  const workflowMap = {
+    validation_toolkit: activeProject.validation_toolkit || null,
+    launch_agent: activeProject.launch_agent || null,
+    first_customer_pack: activeProject.first_customer_pack || null,
+    strategy_agent: activeProject.strategy_agent || null,
+    rag_advisor: activeProject.rag_advisor || null,
+    recommendation_engine: activeProject.recommendation_engine || null,
+    project_evaluation: activeProject.project_evaluation || null,
+    execution_plan: activeProject.execution_plan || null
+  };
+  return workflowMap[type] || null;
+}
+
+function buildWorkflowRequestMeta(type){
+  return {
+    rerun_count: getProjectRunCount(type),
+    previous_result: getPreviousWorkflowResult(type)
+  };
+}
 
 function scrollChatToBottom(){
   requestAnimationFrame(() => {
@@ -2011,6 +2036,7 @@ async function runLaunchAgent(){
   if(!activeProject) return;
   if(!(await canUseAction("launch_agent"))) return;
 
+  const requestMeta = buildWorkflowRequestMeta("launch_agent");
   collapseProjectForResult();
   const loadingId = addMessage(`⏳ Launch Agent is building assets for <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
   trackEvent("launch_agent_run", { idea_title: activeProject.title });
@@ -2024,6 +2050,7 @@ async function runLaunchAgent(){
       body: JSON.stringify({
         idea_title: activeProject.title || "",
         idea_description: activeProject.description || "",
+        ...requestMeta,
         history: messages.map(m => ({
           role: m.role,
           text: getHistoryText(m)
@@ -2042,6 +2069,7 @@ async function runLaunchAgent(){
           idea_title: activeProject.title || "",
           idea_description: activeProject.description || "",
           interests: activeProject.title || "",
+          ...requestMeta,
           history: messages.map(m => ({
             role: m.role,
             text: getHistoryText(m)
@@ -2088,6 +2116,7 @@ async function runProjectStrategyAgent(){
   if(!activeProject) return;
   if(!(await canUseAction("strategy_agent"))) return;
 
+  const requestMeta = buildWorkflowRequestMeta("strategy_agent");
   collapseProjectForResult();
   const loadingId = addMessage(`⏳ Strategy Agent is diagnosing <b>${escapeHtml(activeProject.title)}</b> and building the next workflow...`, "ai");
   trackEvent("strategy_agent_run", { idea_title: activeProject.title });
@@ -2100,6 +2129,7 @@ async function runProjectStrategyAgent(){
       },
       body: JSON.stringify({
         project: activeProject,
+        ...requestMeta,
         history: messages.map(m => ({
           role: m.role,
           text: getHistoryText(m)
@@ -2166,6 +2196,7 @@ async function submitRagAdvisor(){
   }
 
   closeRagAdvisorModal();
+  const requestMeta = buildWorkflowRequestMeta("rag_advisor");
   collapseProjectForResult();
   const loadingId = addMessage(`⏳ Knowledge Advisor is reviewing your saved notes for <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
   trackEvent("rag_advisor_started", { idea_title: activeProject.title, knowledge_notes: knowledgeItems.length });
@@ -2179,6 +2210,7 @@ async function submitRagAdvisor(){
       body: JSON.stringify({
         project: activeProject,
         question,
+        ...requestMeta,
         knowledge_items: knowledgeItems.map(item => ({
           title: item.title || "",
           source: item.source || "",
@@ -2236,6 +2268,7 @@ async function runRecommendationEngine(){
   if(!activeProject) return;
   if(!(await canUseAction("recommendation_engine"))) return;
 
+  const requestMeta = buildWorkflowRequestMeta("recommendation_engine");
   collapseProjectForResult();
   const loadingId = addMessage(`⏳ Recommendation Engine is scoring <b>${escapeHtml(activeProject.title)}</b> and choosing the next best workflow...`, "ai");
   trackEvent("recommendation_engine_started", { idea_title: activeProject.title });
@@ -2248,6 +2281,7 @@ async function runRecommendationEngine(){
       },
       body: JSON.stringify({
         project: activeProject,
+        ...requestMeta,
         analytics_summary: buildProjectAnalyticsSummary(activeProject),
         history: messages.map(m => ({
           role: m.role,
@@ -2301,6 +2335,7 @@ async function runProjectEvaluation(){
   if(!activeProject) return;
   if(!(await canUseAction("project_evaluation"))) return;
 
+  const requestMeta = buildWorkflowRequestMeta("project_evaluation");
   collapseProjectForResult();
   const loadingId = addMessage(`⏳ Project Evaluation is auditing <b>${escapeHtml(activeProject.title)}</b> for quality, evidence, and risk...`, "ai");
   trackEvent("project_evaluation_started", { idea_title: activeProject.title });
@@ -2313,6 +2348,7 @@ async function runProjectEvaluation(){
       },
       body: JSON.stringify({
         project: activeProject,
+        ...requestMeta,
         analytics_summary: buildProjectAnalyticsSummary(activeProject),
         history: messages.map(m => ({
           role: m.role,
@@ -2366,6 +2402,7 @@ async function runValidationToolkit(){
   if(!activeProject) return;
   if(!(await canUseAction("validation_toolkit"))) return;
 
+  const requestMeta = buildWorkflowRequestMeta("validation_toolkit");
   collapseProjectForResult();
   const loadingId = addMessage(`⏳ Validation Toolkit is analyzing <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
   trackEvent("validation_toolkit_run", { idea_title: activeProject.title });
@@ -2379,6 +2416,7 @@ async function runValidationToolkit(){
       body: JSON.stringify({
         idea_title: activeProject.title || "",
         idea_description: activeProject.description || "",
+        ...requestMeta,
         history: messages.map(m => ({
           role: m.role,
           text: getHistoryText(m)
@@ -2397,6 +2435,7 @@ async function runValidationToolkit(){
           idea_title: activeProject.title || "",
           idea_description: activeProject.description || "",
           interests: activeProject.title || "",
+          ...requestMeta,
           history: messages.map(m => ({
             role: m.role,
             text: getHistoryText(m)
@@ -2454,6 +2493,7 @@ async function runFirstCustomerPack(){
   if(!activeProject) return;
   if(!(await canUseAction("first_customer_pack"))) return;
 
+  const requestMeta = buildWorkflowRequestMeta("first_customer_pack");
   collapseProjectForResult();
   const loadingId = addMessage(`⏳ First Customer Pack is preparing outreach assets for <b>${escapeHtml(activeProject.title)}</b>...`, "ai");
   trackEvent("first_customer_pack_started", { idea_title: activeProject.title });
@@ -2467,6 +2507,7 @@ async function runFirstCustomerPack(){
       body: JSON.stringify({
         idea_title: activeProject.title || "",
         idea_description: activeProject.description || "",
+        ...requestMeta,
         history: messages.map(m => ({
           role: m.role,
           text: getHistoryText(m)
@@ -2485,6 +2526,7 @@ async function runFirstCustomerPack(){
           idea_title: activeProject.title || "",
           idea_description: activeProject.description || "",
           interests: activeProject.title || "",
+          ...requestMeta,
           history: messages.map(m => ({
             role: m.role,
             text: getHistoryText(m)
