@@ -678,8 +678,20 @@ function getTodayUsageDocId(){
 }
 
 function createProjectId(){
-  return `project_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
+    return `project_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function buildProjectSignature(title, description){
+    return `${String(title || "").trim().toLowerCase()}::${String(description || "").trim().toLowerCase()}`;
+  }
+
+  function findSavedProjectMatch(idea){
+    const signature = buildProjectSignature(idea?.title, idea?.description);
+    if(!signature || signature === "::") return null;
+    return savedProjects.find(project =>
+      buildProjectSignature(project?.title, project?.description) === signature
+    ) || null;
+  }
 
 function getUsageCount(actionKey){
   return Number(usageSummary?.[actionKey] || 0);
@@ -929,13 +941,18 @@ function getSmartLinks(title){
 
 // SIDEBAR
 function loadChatList(){
- const user=auth.currentUser;
-
- db.collection("users").doc(user.uid)
- .collection("chats").orderBy("createdAt","desc")
- .get().then(snapshot=>{
-
-  sidebar.innerHTML = `
+   const user=auth.currentUser;
+  
+   db.collection("users").doc(user.uid)
+   .collection("chats").orderBy("createdAt","desc")
+   .get().then(snapshot=>{
+    if(snapshot.empty){
+      clearCurrentChatView(false);
+    } else if(currentChatId && !snapshot.docs.some(doc => doc.id === currentChatId)){
+      clearCurrentChatView(false);
+    }
+  
+    sidebar.innerHTML = `
   <button onclick="newChat()">➕ New Chat</button>
   <button onclick="openProjectsModal()">📁 My Projects (${savedProjects.length})</button>
   <button onclick="openKnowledgeBaseModal()">🧠 Knowledge Base (${knowledgeItems.length})</button>
@@ -1010,9 +1027,9 @@ btn.onclick = (e) => {
 
 // MESSAGE
 function addMessage(text,type){
-  const div=document.createElement("div");
-  div.className="message "+type;
-  div.innerHTML=text;
+    const div=document.createElement("div");
+    div.className="message "+type;
+    div.innerHTML=text;
 
   const id = Date.now();
   div.setAttribute("data-id", id);
@@ -1020,8 +1037,20 @@ function addMessage(text,type){
   chat.appendChild(div);
   scrollChatToBottom();
 
-  return id; // 🔥 IMPORTANT
-}
+    return id; // 🔥 IMPORTANT
+  }
+
+  function clearCurrentChatView(showExample = false){
+    currentChatId = null;
+    messages = [];
+    currentPlans = [];
+    compareIdeas = [];
+    selectedCoachIdea = null;
+    chat.innerHTML = "";
+    if(showExample){
+      addMessage("💡 Example: I know Python, want automation ideas for healthcare clinics","ai");
+    }
+  }
 
 function scrollChatToBottom(){
   requestAnimationFrame(() => {
@@ -1356,37 +1385,40 @@ function loadProjects(){
 }
 
 function persistProjectLibraryEntry(project){
-  if(!auth.currentUser || !project) return Promise.resolve();
-  if(!project.projectId){
-    project.projectId = createProjectId();
+    if(!auth.currentUser || !project) return Promise.resolve();
+    if(!project.projectId){
+      project.projectId = createProjectId();
+    }
+    project.saved_to_library = true;
+    return db.collection("users").doc(auth.currentUser.uid)
+      .collection("projects").doc(project.projectId)
+      .set({
+        ...project,
+        archived: !!project.archived,
+        saved_to_library: true,
+        createdAt: project.createdAt || new Date(),
+        updatedAt: new Date()
+      }, { merge: true })
+      .then(() => loadProjects());
   }
-  return db.collection("users").doc(auth.currentUser.uid)
-    .collection("projects").doc(project.projectId)
-    .set({
-      ...project,
-      archived: !!project.archived,
-      createdAt: project.createdAt || new Date(),
-      updatedAt: new Date()
-    }, { merge: true })
-    .then(() => loadProjects());
-}
 
 function openProjectFromLibrary(projectId){
-  const project = savedProjects.find(item => item.projectId === projectId);
-  if(!project) return;
-
-  activeProject = {
-    ...project,
-    projectId
-  };
-  activeProjectTab = "overview";
-  activeProjectCollapsed = false;
-  selectedCoachIdea = null;
-  renderActiveProjectPanel();
-  saveActiveProjectToStore(activeProject);
-  closeProjectsModal();
-  trackEvent("project_opened_from_library", { project_id: projectId, idea_title: project.title || "" });
-}
+    const project = savedProjects.find(item => item.projectId === projectId);
+    if(!project) return;
+  
+    activeProject = {
+      ...project,
+      projectId
+    };
+    activeProject.saved_to_library = true;
+    activeProjectTab = "overview";
+    activeProjectCollapsed = false;
+    selectedCoachIdea = null;
+    renderActiveProjectPanel();
+    saveActiveProjectToStore(activeProject, { persistLibrary: true });
+    closeProjectsModal();
+    trackEvent("project_opened_from_library", { project_id: projectId, idea_title: project.title || "" });
+  }
 
 function archiveProject(projectId){
   const project = savedProjects.find(item => item.projectId === projectId);
@@ -1829,19 +1861,24 @@ function expandActiveProject(){
   renderActiveProjectPanel();
 }
 
-function saveActiveProjectToStore(project){
-  if(!auth.currentUser) return Promise.resolve();
-  if(project && !project.projectId){
-    project.projectId = createProjectId();
-  }
-  return db.collection("users").doc(auth.currentUser.uid)
+function saveActiveProjectToStore(project, options = {}){
+    if(!auth.currentUser) return Promise.resolve();
+    if(project && !project.projectId){
+      project.projectId = createProjectId();
+    }
+    return db.collection("users").doc(auth.currentUser.uid)
     .collection("workspace").doc("current_project")
-    .set({
-      ...project,
-      updatedAt: new Date()
-    }, { merge: true })
-    .then(() => persistProjectLibraryEntry(project));
-}
+      .set({
+        ...project,
+        updatedAt: new Date()
+      }, { merge: true })
+      .then(() => {
+        if(options.persistLibrary || project?.saved_to_library){
+          return persistProjectLibraryEntry(project);
+        }
+        return Promise.resolve();
+      });
+  }
 
 function loadActiveProject(){
   if(!auth.currentUser) return;
@@ -1863,14 +1900,38 @@ function loadActiveProject(){
 }
 
 function setActiveProject(index){
-  const idea = currentPlans[index];
-  if(!idea || !auth.currentUser) return;
+    const idea = currentPlans[index];
+    if(!idea || !auth.currentUser) return;
 
-  activeProject = {
-    projectId: createProjectId(),
-    title: idea.title || "",
-    description: idea.description || "",
-    who_is_this_for: idea.who_is_this_for || "",
+    const currentSignature = buildProjectSignature(activeProject?.title, activeProject?.description);
+    const targetSignature = buildProjectSignature(idea.title, idea.description);
+    if(activeProject && currentSignature === targetSignature){
+      activeProjectCollapsed = false;
+      renderActiveProjectPanel();
+      return;
+    }
+
+    const existingProject = findSavedProjectMatch(idea);
+    if(existingProject){
+      activeProject = {
+        ...existingProject,
+        archived: false,
+        saved_to_library: true
+      };
+      activeProjectTab = "overview";
+      activeProjectCollapsed = false;
+      renderActiveProjectPanel();
+      saveActiveProjectToStore(activeProject, { persistLibrary: true });
+      trackEvent("active_project_reused", { idea_title: idea.title, project_id: existingProject.projectId || "" });
+      return;
+    }
+  
+      activeProject = {
+        projectId: createProjectId(),
+      saved_to_library: true,
+        title: idea.title || "",
+      description: idea.description || "",
+      who_is_this_for: idea.who_is_this_for || "",
     why_it_works: idea.why_it_works || "",
     current_goal: `Validate ${idea.title || "this idea"} with a narrow audience and get the first real customer conversation.`,
     progress: {
@@ -1898,10 +1959,10 @@ function setActiveProject(index){
     updatedAt: new Date()
   };
 
-  activeProjectTab = "overview";
-  activeProjectCollapsed = false;
-  renderActiveProjectPanel();
-  saveActiveProjectToStore(activeProject);
+    activeProjectTab = "overview";
+    activeProjectCollapsed = false;
+    renderActiveProjectPanel();
+    saveActiveProjectToStore(activeProject, { persistLibrary: true });
   addMessage(`✅ <b>${escapeHtml(idea.title || "Project")}</b> is now your Active Project and has been added to <b>My Projects</b>.`, "ai");
   trackEvent("active_project_set", { idea_title: idea.title });
 }
@@ -2985,10 +3046,15 @@ function loadChat(id){
 
 // DELETE
 function deleteChat(id){
- closeMobileSidebar();
- db.collection("users").doc(auth.currentUser.uid)
- .collection("chats").doc(id).delete().then(loadChatList);
-}
+   closeMobileSidebar();
+   db.collection("users").doc(auth.currentUser.uid)
+   .collection("chats").doc(id).delete().then(()=>{
+    if(currentChatId === id){
+      clearCurrentChatView(false);
+    }
+    loadChatList();
+   });
+  }
 
 // SAVE
 function savePlan(index){
