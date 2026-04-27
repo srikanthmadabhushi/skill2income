@@ -455,6 +455,7 @@ let loginInProgress=false;
 let ideaGenerationCount = 0;
 let currentPlan = "free";
 let usageSummary = {};
+const TEST_MODE_HIDE_PRO_GATING = true;
 const analyticsSessionId = `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 const FREE_LIMITS = {
   idea_generations: 3,
@@ -464,7 +465,9 @@ const FREE_LIMITS = {
   idea_comparison: 1,
   pdf_export: 1,
   strategy_agent: 1,
-  rag_advisor: 1
+  rag_advisor: 1,
+  recommendation_engine: 1,
+  project_evaluation: 1
 };
 const ACTION_LABELS = {
   idea_generations: "idea generations",
@@ -474,7 +477,9 @@ const ACTION_LABELS = {
   idea_comparison: "idea comparisons",
   pdf_export: "PDF exports",
   strategy_agent: "Project Strategy Agent runs",
-  rag_advisor: "Knowledge Advisor runs"
+  rag_advisor: "Knowledge Advisor runs",
+  recommendation_engine: "Recommendation Engine runs",
+  project_evaluation: "Project Evaluation runs"
 };
 
 function getHistoryText(message){
@@ -510,7 +515,7 @@ function goPricing(){
 function renderTopBarActions(user){
   if(user){
     topBarActions.innerHTML = `
-      <button class="top-bar-btn primary" onclick="showUpgrade()">Upgrade</button>
+      ${TEST_MODE_HIDE_PRO_GATING ? "" : `<button class="top-bar-btn primary" onclick="showUpgrade()">Upgrade</button>`}
     `;
   } else {
     topBarActions.innerHTML = `
@@ -669,6 +674,7 @@ async function loadUsageSummary(){
 }
 
 async function canUseAction(actionKey){
+  if(TEST_MODE_HIDE_PRO_GATING) return true;
   if(currentPlan === "pro") return true;
   const limit = FREE_LIMITS[actionKey];
   if(!limit) return true;
@@ -887,7 +893,7 @@ function loadChatList(){
   <div style="margin:10px 0 14px 0; padding:10px; background:#111827; border:1px solid #334155; border-radius:10px;">
     <div style="font-size:12px; color:#93c5fd; font-weight:700; margin-bottom:6px;">${getPlanBadgeLabel()} Plan</div>
     <div style="font-size:12px; color:#cbd5e1; line-height:1.5;">${getUsageSnapshotText()}</div>
-    ${currentPlan !== "pro" ? `<button onclick="showUpgrade()" style="margin-top:10px; width:100%; padding:8px 10px; border:none; border-radius:8px; background:#22c55e; color:#04130b; font-weight:700; cursor:pointer;">Upgrade to Pro</button>` : ""}
+    ${!TEST_MODE_HIDE_PRO_GATING && currentPlan !== "pro" ? `<button onclick="showUpgrade()" style="margin-top:10px; width:100%; padding:8px 10px; border:none; border-radius:8px; background:#22c55e; color:#04130b; font-weight:700; cursor:pointer;">Upgrade to Pro</button>` : ""}
   </div>
 
   <hr>
@@ -1229,13 +1235,15 @@ function renderProjectsModal(){
     const bTime = new Date(b.updatedAt || b.createdAt || 0).getTime();
     return bTime - aTime;
   });
+  const activeItems = items.filter(project => !project.archived);
+  const archivedItems = items.filter(project => !!project.archived);
 
   if(!items.length){
     projectsBody.innerHTML = `<div class="project-empty">No saved projects yet. Set an Active Project from an idea card and it will appear here.</div>`;
     return;
   }
 
-  projectsBody.innerHTML = items.map(project => {
+  const renderProjectCard = (project, archived = false) => {
     const progressDone = getProjectChecklist().filter(item => project.progress?.[item.key]).length;
     return `
       <div style="background:#111827; border:1px solid #334155; border-radius:12px; padding:12px;">
@@ -1244,15 +1252,33 @@ function renderProjectsModal(){
             <div style="color:#f8fafc; font-weight:700;">${escapeHtml(project.title || "Untitled project")}</div>
             <div style="color:#94a3b8; font-size:12px; margin-top:4px;">Updated ${escapeHtml(formatDisplayDate(project.updatedAt || project.createdAt))}</div>
             <div style="color:#38bdf8; font-size:12px; margin-top:6px;">${progressDone}/${getProjectChecklist().length} milestones completed</div>
+            ${archived ? `<div style="color:#fbbf24; font-size:12px; margin-top:6px;">Archived project</div>` : ""}
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
             <button class="project-tab" onclick="openProjectFromLibrary('${project.projectId}')">Open</button>
-            <button class="project-tab" onclick="archiveProject('${project.projectId}')">Archive</button>
+            ${archived
+              ? `<button class="project-tab" onclick="restoreProject('${project.projectId}')">Restore</button>`
+              : `<button class="project-tab" onclick="archiveProject('${project.projectId}')">Archive</button>`
+            }
+            <button class="project-tab" onclick="deleteProject('${project.projectId}')">Delete</button>
           </div>
         </div>
       </div>
     `;
-  }).join("");
+  };
+
+  projectsBody.innerHTML = `
+    <div style="display:flex; flex-direction:column; gap:14px;">
+      <div>
+        <div style="font-weight:700; color:#f8fafc; margin-bottom:8px;">Active Projects (${activeItems.length})</div>
+        ${activeItems.length ? activeItems.map(project => renderProjectCard(project, false)).join("") : `<div class="project-empty">No active projects right now.</div>`}
+      </div>
+      <div>
+        <div style="font-weight:700; color:#f8fafc; margin-bottom:8px;">Archived Projects (${archivedItems.length})</div>
+        ${archivedItems.length ? archivedItems.map(project => renderProjectCard(project, true)).join("") : `<div class="project-empty">No archived projects yet.</div>`}
+      </div>
+    </div>
+  `;
 }
 
 function loadProjects(){
@@ -1263,8 +1289,7 @@ function loadProjects(){
     .get()
     .then(snapshot => {
       savedProjects = snapshot.docs
-        .map(doc => ({ projectId: doc.id, ...doc.data() }))
-        .filter(project => !project.archived);
+        .map(doc => ({ projectId: doc.id, ...doc.data() }));
       renderProjectsModal();
       loadChatList();
     })
@@ -1327,6 +1352,45 @@ function archiveProject(projectId){
       trackEvent("project_archived", { project_id: projectId, idea_title: project.title || "" });
     })
     .catch(err => console.error("project archive error", err));
+}
+
+function restoreProject(projectId){
+  const project = savedProjects.find(item => item.projectId === projectId);
+  if(!project || !auth.currentUser) return;
+
+  db.collection("users").doc(auth.currentUser.uid)
+    .collection("projects").doc(projectId)
+    .set({
+      archived: false,
+      updatedAt: new Date()
+    }, { merge: true })
+    .then(() => {
+      loadProjects();
+      renderProjectsModal();
+      trackEvent("project_restored", { project_id: projectId, idea_title: project.title || "" });
+    })
+    .catch(err => console.error("project restore error", err));
+}
+
+function deleteProject(projectId){
+  const project = savedProjects.find(item => item.projectId === projectId);
+  if(!project || !auth.currentUser) return;
+  const shouldDelete = confirm(`Delete "${project.title || "this project"}" permanently?`);
+  if(!shouldDelete) return;
+
+  db.collection("users").doc(auth.currentUser.uid)
+    .collection("projects").doc(projectId)
+    .delete()
+    .then(() => {
+      if(activeProject?.projectId === projectId){
+        clearActiveProject();
+      }
+      savedProjects = savedProjects.filter(item => item.projectId !== projectId);
+      renderProjectsModal();
+      loadChatList();
+      trackEvent("project_deleted", { project_id: projectId, idea_title: project.title || "" });
+    })
+    .catch(err => console.error("project delete error", err));
 }
 
 function saveSupportTicket(ticket){
@@ -1449,13 +1513,16 @@ async function copyShareSummary(mode = "general"){
 }
 
 function renderUpgradePrompt(context){
+  if(TEST_MODE_HIDE_PRO_GATING) return "";
   const titleMap = {
     validation: "Unlock deeper validation workflows",
     launch: "Turn more ideas into launch-ready assets",
     export: "Export unlimited polished project reports",
     customer_pack: "Generate more first-customer packs faster",
     strategy: "Unlock unlimited strategy runs",
-    knowledge: "Use your own knowledge notes more often"
+    knowledge: "Use your own knowledge notes more often",
+    recommendation: "Unlock unlimited recommendation runs",
+    evaluation: "Unlock unlimited evaluation runs"
   };
 
   const detailMap = {
@@ -1464,7 +1531,9 @@ function renderUpgradePrompt(context){
     export: "Pro is ideal for users who want reusable project exports, advanced packs, and unlimited workspace actions.",
     customer_pack: "Pro makes this workflow stronger with unlimited packs, launch cycles, and execution support.",
     strategy: "Pro is ideal if you want to keep running structured AI strategy diagnostics, action queues, and project agents across multiple ideas.",
-    knowledge: "Pro is ideal if you want unlimited retrieval-grounded answers using your own saved notes, customer research, and internal playbooks."
+    knowledge: "Pro is ideal if you want unlimited retrieval-grounded answers using your own saved notes, customer research, and internal playbooks.",
+    recommendation: "Pro is ideal if you want unlimited recommendation scoring across multiple projects and repeated workspace iterations.",
+    evaluation: "Pro is ideal if you want repeated project audits, quality evaluation, and observability reviews while the product evolves."
   };
 
   return `
@@ -1500,6 +1569,8 @@ function getProjectChecklist(){
   return [
     { key: "idea_selected", label: "Idea selected" },
     { key: "knowledge_advisor_completed", label: "Knowledge advisor completed" },
+    { key: "recommendation_completed", label: "Recommendation engine completed" },
+    { key: "evaluation_completed", label: "Project evaluation completed" },
     { key: "validation_completed", label: "Validation toolkit completed" },
     { key: "execution_plan_opened", label: "Execution plan opened" },
     { key: "first_customer_pack_ready", label: "First customer pack generated" },
@@ -1520,6 +1591,24 @@ function buildProjectAssets(project){
     outreach: customerPack.cold_email || `Hi [Name], I am building ${title} for ${audience}. I noticed teams like yours often struggle with [specific pain point]. Would you be open to a 15-minute chat so I can show a simple version and get feedback?`,
     landing: customerPack.landing_page_copy ? `Headline: ${customerPack.landing_page_copy.headline || ""}\nSubheadline: ${customerPack.landing_page_copy.subheadline || ""}\nProof points:\n- ${landingProofPoints}\nCTA: ${customerPack.call_to_action || "Book an early access demo"}` : `Headline: Launch ${title} faster\nSubheadline: A focused solution for ${audience} who need a better way to handle this workflow.\nCTA: Book an early access demo`,
     offer: customerPack.pricing_offer ? `Package: ${customerPack.pricing_offer.package_name || ""}\nPrice: ${customerPack.pricing_offer.price_range || ""}\nIncluded:\n- ${(Array.isArray(customerPack.pricing_offer.what_is_included) ? customerPack.pricing_offer.what_is_included.join("\n- ") : customerPack.pricing_offer.what_is_included || "")}` : `First offer: I will set up the first version of ${title} for one niche customer, with onboarding support and a feedback loop, in exchange for an early pilot fee.`
+  };
+}
+
+function buildProjectAnalyticsSummary(project){
+  const timeline = Array.isArray(project?.timeline) ? project.timeline : [];
+  const linkedTickets = getProjectTickets(project);
+  const recommendation = project?.recommendation_engine || {};
+  const openTicketCount = linkedTickets.filter(ticket => !["Resolved", "Closed", "Canceled"].includes(ticket.status)).length;
+  return {
+    progress_completed: getProjectChecklist().filter(item => project?.progress?.[item.key]).length,
+    timeline_events: timeline.length,
+    linked_ticket_count: linkedTickets.length,
+    open_ticket_count: openTicketCount,
+    knowledge_notes: knowledgeItems.length,
+    chat_message_count: messages.length,
+    coach_turns: messages.filter(item => (item.historyText || item.text || "").toLowerCase().includes("coach")).length,
+    usage_signals: Object.keys(usageSummary || {}).filter(key => key !== "dateKey" && Number(usageSummary[key] || 0) > 0).length,
+    last_recommended_workflow: recommendation.recommended_workflow || ""
   };
 }
 
@@ -1592,6 +1681,10 @@ function renderActiveProjectPanel(){
       <p><b>Current goal:</b><br>${escapeHtml(activeProject.current_goal || "Validate the smallest version and get the first customer conversation.")}</p>
       ${activeProject.rag_advisor ? `<p><b>Knowledge summary:</b><br>${escapeHtml(activeProject.rag_advisor.retrieval_summary || "")}</p>` : ""}
       ${activeProject.rag_advisor ? `<p><b>Knowledge-guided answer:</b><br>${escapeHtml(activeProject.rag_advisor.answer || "")}</p>` : ""}
+      ${activeProject.recommendation_engine ? `<p><b>ML readiness:</b><br>${escapeHtml(String(activeProject.recommendation_engine.readiness_score || 0))}/100 readiness • ${escapeHtml(String(activeProject.recommendation_engine.momentum_score || 0))}/100 momentum</p>` : ""}
+      ${activeProject.recommendation_engine ? `<p><b>Recommended workflow:</b><br>${escapeHtml(activeProject.recommendation_engine.recommended_workflow || "")} - ${escapeHtml(activeProject.recommendation_engine.next_best_action || "")}</p>` : ""}
+      ${activeProject.project_evaluation ? `<p><b>Evaluation score:</b><br>${escapeHtml(activeProject.project_evaluation.output_quality_score?.label || "")} (${escapeHtml(String(activeProject.project_evaluation.output_quality_score?.score || ""))}/10)</p>` : ""}
+      ${activeProject.project_evaluation ? `<p><b>Evaluation summary:</b><br>${escapeHtml(activeProject.project_evaluation.evaluation_summary || "")}</p>` : ""}
       ${validationScore ? `<p><b>Validation score:</b><br>${escapeHtml(validationScore.label || "Unknown")} (${escapeHtml(String(validationScore.score || ""))}/10)${validationScore.reason ? ` - ${escapeHtml(validationScore.reason)}` : ""}</p>` : ""}
       ${validationSummary ? `<p><b>Validation summary:</b><br>${escapeHtml(validationSummary)}</p>` : ""}
       ${activeProject.execution_plan ? `<p><b>Execution summary:</b><br>${escapeHtml(activeProject.execution_plan.summary || "")}</p>` : ""}
@@ -1640,6 +1733,8 @@ function renderActiveProjectPanel(){
       <div class="project-actions">
         <button class="project-tab" onclick="continueActiveCoach()">Continue with AI Coach</button>
         <button class="project-tab" onclick="openRagAdvisorModal()">Run Knowledge Advisor</button>
+        <button class="project-tab" onclick="runRecommendationEngine()">Run Recommendation Engine</button>
+        <button class="project-tab" onclick="runProjectEvaluation()">Run Project Evaluation</button>
         <button class="project-tab" onclick="runValidationToolkit()">Run Validation Toolkit</button>
         <button class="project-tab" onclick="runLaunchAgent()">Run Launch Agent</button>
         <button class="project-tab" onclick="runProjectStrategyAgent()">Run Strategy Agent</button>
@@ -1724,6 +1819,8 @@ function setActiveProject(index){
     progress: {
       idea_selected: true,
       knowledge_advisor_completed: false,
+      recommendation_completed: false,
+      evaluation_completed: false,
       validation_completed: false,
       execution_plan_opened: false,
       first_customer_pack_ready: false,
@@ -2013,6 +2110,136 @@ async function submitRagAdvisor(){
     const errorText = err.message || String(err);
     addMessage(`❌ Knowledge Advisor failed: ${escapeHtml(errorText)}`, "ai");
     trackEvent("rag_advisor_failed", { idea_title: activeProject.title, error: errorText });
+  }
+}
+
+async function runRecommendationEngine(){
+  if(!activeProject) return;
+  if(!(await canUseAction("recommendation_engine"))) return;
+
+  collapseProjectForResult();
+  const loadingId = addMessage(`⏳ Recommendation Engine is scoring <b>${escapeHtml(activeProject.title)}</b> and choosing the next best workflow...`, "ai");
+  trackEvent("recommendation_engine_started", { idea_title: activeProject.title });
+
+  try{
+    const res = await fetch("https://skill2income-api.onrender.com/recommendation-engine", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        project: activeProject,
+        analytics_summary: buildProjectAnalyticsSummary(activeProject),
+        history: messages.map(m => ({
+          role: m.role,
+          text: getHistoryText(m)
+        }))
+      })
+    });
+
+    const data = await res.json();
+    removeMessage(loadingId);
+
+    if(!res.ok || data?.error){
+      const errorText = data?.error || `Server returned ${res.status}`;
+      addMessage(`❌ Recommendation Engine failed: ${escapeHtml(errorText)}`, "ai");
+      trackEvent("recommendation_engine_failed", { idea_title: activeProject.title, error: errorText });
+      return;
+    }
+
+    const recommendation = data?.result || {};
+    activeProject.recommendation_engine = recommendation;
+    activeProject.progress = activeProject.progress || {};
+    activeProject.progress.recommendation_completed = true;
+    appendActiveProjectTimeline("recommendation_engine", "Recommendation Engine completed", {
+      summary: recommendation.next_best_action || `Recommended ${recommendation.recommended_workflow || "the next workflow"} for this project.`
+    });
+    saveActiveProjectToStore(activeProject);
+    renderActiveProjectPanel();
+
+    const html = renderRecommendationEngine(recommendation, activeProject.title || "Recommendation Engine") + renderUpgradePrompt("recommendation");
+    addMessage(html, "ai");
+    messages.push({
+      role: "ai",
+      text: html,
+      historyText: JSON.stringify({ recommendation_engine_for: activeProject.title, result: recommendation })
+    });
+    saveChat();
+    recordUsage("recommendation_engine");
+    trackEvent("recommendation_engine_succeeded", {
+      idea_title: activeProject.title,
+      recommended_workflow: recommendation.recommended_workflow || ""
+    });
+  } catch(err){
+    removeMessage(loadingId);
+    const errorText = err.message || String(err);
+    addMessage(`❌ Recommendation Engine failed: ${escapeHtml(errorText)}`, "ai");
+    trackEvent("recommendation_engine_failed", { idea_title: activeProject.title, error: errorText });
+  }
+}
+
+async function runProjectEvaluation(){
+  if(!activeProject) return;
+  if(!(await canUseAction("project_evaluation"))) return;
+
+  collapseProjectForResult();
+  const loadingId = addMessage(`⏳ Project Evaluation is auditing <b>${escapeHtml(activeProject.title)}</b> for quality, evidence, and risk...`, "ai");
+  trackEvent("project_evaluation_started", { idea_title: activeProject.title });
+
+  try{
+    const res = await fetch("https://skill2income-api.onrender.com/project-evaluation", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        project: activeProject,
+        analytics_summary: buildProjectAnalyticsSummary(activeProject),
+        history: messages.map(m => ({
+          role: m.role,
+          text: getHistoryText(m)
+        }))
+      })
+    });
+
+    const data = await res.json();
+    removeMessage(loadingId);
+
+    if(!res.ok || data?.error){
+      const errorText = data?.error || `Server returned ${res.status}`;
+      addMessage(`❌ Project Evaluation failed: ${escapeHtml(errorText)}`, "ai");
+      trackEvent("project_evaluation_failed", { idea_title: activeProject.title, error: errorText });
+      return;
+    }
+
+    const evaluation = data?.result || {};
+    activeProject.project_evaluation = evaluation;
+    activeProject.progress = activeProject.progress || {};
+    activeProject.progress.evaluation_completed = true;
+    appendActiveProjectTimeline("project_evaluation", "Project Evaluation completed", {
+      summary: evaluation.evaluation_summary || `Evaluated quality and observability for ${activeProject.title}.`
+    });
+    saveActiveProjectToStore(activeProject);
+    renderActiveProjectPanel();
+
+    const html = renderProjectEvaluation(evaluation, activeProject.title || "Project Evaluation") + renderUpgradePrompt("evaluation");
+    addMessage(html, "ai");
+    messages.push({
+      role: "ai",
+      text: html,
+      historyText: JSON.stringify({ project_evaluation_for: activeProject.title, result: evaluation })
+    });
+    saveChat();
+    recordUsage("project_evaluation");
+    trackEvent("project_evaluation_succeeded", {
+      idea_title: activeProject.title,
+      score: evaluation?.output_quality_score?.score || ""
+    });
+  } catch(err){
+    removeMessage(loadingId);
+    const errorText = err.message || String(err);
+    addMessage(`❌ Project Evaluation failed: ${escapeHtml(errorText)}`, "ai");
+    trackEvent("project_evaluation_failed", { idea_title: activeProject.title, error: errorText });
   }
 }
 
@@ -3095,6 +3322,10 @@ window.onload = () => {
   }
 };
 function showUpgrade(){
+  if(TEST_MODE_HIDE_PRO_GATING){
+    addMessage(`<div style="padding:12px; background:#111827; border-radius:10px;">Upgrade is temporarily hidden during testing mode. All workflows remain available until testing is complete.</div>`, "ai");
+    return;
+  }
   goPricing();
 }
 function reusePlan(index){
@@ -3456,6 +3687,64 @@ function renderLaunchAgent(plan, ideaTitle){
       <ol>
         ${launchDays.map(day => `<li>${escapeHtml(day)}</li>`).join("")}
       </ol>
+    </div>
+  `;
+}
+
+function renderRecommendationEngine(plan, ideaTitle){
+  const recommendations = Array.isArray(plan?.top_recommendations) ? plan.top_recommendations : [];
+  const blockers = Array.isArray(plan?.blockers) ? plan.blockers : [];
+  const snapshot = plan?.feature_snapshot || {};
+
+  return `
+    <div style="margin-bottom:15px; padding:15px; background:#0f172a; border:2px solid #f59e0b; border-radius:12px;">
+      <div style="color:#f59e0b; font-weight:bold; margin-bottom:8px;">Recommendation Engine</div>
+      <h3 style="color:#fde68a;">${escapeHtml(ideaTitle)}</h3>
+      <p><b>Readiness:</b> ${escapeHtml(String(plan?.readiness_score || 0))}/100 | <b>Momentum:</b> ${escapeHtml(String(plan?.momentum_score || 0))}/100</p>
+      <p><b>Project stage:</b> ${escapeHtml(plan?.project_stage || "Unknown")}</p>
+      <p><b>Recommended workflow:</b><br>${escapeHtml(plan?.recommended_workflow || "")}</p>
+      <p><b>Next best action:</b><br>${escapeHtml(plan?.next_best_action || "")}</p>
+      <p><b>Top recommendations:</b></p>
+      <ol>${recommendations.map(item => `<li><b>${escapeHtml(item.workflow || "")}</b> - ${escapeHtml(item.reason || "")} (${escapeHtml(String(item.confidence || ""))}/10 confidence)</li>`).join("")}</ol>
+      <p><b>Main blockers:</b></p>
+      <ul>${blockers.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      <p><b>Feature snapshot:</b></p>
+      <ul>
+        <li>Progress: ${escapeHtml(String(snapshot.progress_completed || 0))}/${escapeHtml(String(snapshot.progress_total || 0))}</li>
+        <li>Validation score: ${escapeHtml(String(snapshot.validation_score || 0))}</li>
+        <li>Knowledge notes: ${escapeHtml(String(snapshot.knowledge_notes || 0))}</li>
+        <li>Timeline events: ${escapeHtml(String(snapshot.timeline_events || 0))}</li>
+        <li>Open tickets: ${escapeHtml(String(snapshot.open_ticket_count || 0))}</li>
+      </ul>
+    </div>
+  `;
+}
+
+function renderProjectEvaluation(plan, ideaTitle){
+  const evidenceCoverage = Array.isArray(plan?.evidence_coverage) ? plan.evidence_coverage : [];
+  const consistencyChecks = Array.isArray(plan?.consistency_checks) ? plan.consistency_checks : [];
+  const riskFlags = Array.isArray(plan?.risk_flags) ? plan.risk_flags : [];
+  const blindSpots = Array.isArray(plan?.blind_spots) ? plan.blind_spots : [];
+  const monitoringRecommendations = Array.isArray(plan?.monitoring_recommendations) ? plan.monitoring_recommendations : [];
+  const score = plan?.output_quality_score || {};
+
+  return `
+    <div style="margin-bottom:15px; padding:15px; background:#111827; border:2px solid #a78bfa; border-radius:12px;">
+      <div style="color:#a78bfa; font-weight:bold; margin-bottom:8px;">Project Evaluation</div>
+      <h3 style="color:#ddd6fe;">${escapeHtml(ideaTitle)}</h3>
+      <p><b>Evaluation summary:</b><br>${escapeHtml(plan?.evaluation_summary || "")}</p>
+      <p><b>Output quality:</b> ${escapeHtml(score.label || "Unknown")} (${escapeHtml(String(score.score || ""))}/10)</p>
+      <p><b>Reason:</b><br>${escapeHtml(score.reason || "")}</p>
+      <p><b>Evidence coverage:</b></p>
+      <ul>${evidenceCoverage.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      <p><b>Consistency checks:</b></p>
+      <ul>${consistencyChecks.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      <p><b>Risk flags:</b></p>
+      <ul>${riskFlags.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      <p><b>Blind spots:</b></p>
+      <ul>${blindSpots.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      <p><b>Monitoring recommendations:</b></p>
+      <ol>${monitoringRecommendations.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ol>
     </div>
   `;
 }
