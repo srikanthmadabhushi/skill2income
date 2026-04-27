@@ -74,9 +74,12 @@ body { margin:0; font-family:'Inter'; background:#020617; color:white; overflow:
 .modal-card h3 { margin-top:0; }
 .modal-label { display:block; color:#cbd5e1; font-size:13px; font-weight:600; margin:10px 0 6px 0; }
 .modal-card input, .modal-card textarea, .modal-card select { width:100%; box-sizing:border-box; margin-top:0; margin-bottom:12px; padding:12px; border-radius:10px; border:1px solid #475569; background:#111827; color:white; outline:none; }
-.modal-card input::placeholder, .modal-card textarea::placeholder { color:#94a3b8; }
-.modal-card input:focus, .modal-card textarea:focus, .modal-card select:focus { border-color:#38bdf8; box-shadow:0 0 0 3px rgba(56,189,248,0.18); }
-.modal-actions { display:flex; gap:10px; justify-content:flex-end; }
+  .modal-card input::placeholder, .modal-card textarea::placeholder { color:#94a3b8; }
+  .modal-card input:focus, .modal-card textarea:focus, .modal-card select:focus { border-color:#38bdf8; box-shadow:0 0 0 3px rgba(56,189,248,0.18); }
+  .modal-actions { display:flex; gap:10px; justify-content:flex-end; }
+  #projectsModal .modal-card { width:min(720px, 100%); max-height:min(85vh, 760px); display:flex; flex-direction:column; overflow:hidden; }
+  #projectsBody { flex:1 1 auto; min-height:0; overflow:auto; padding-right:6px; }
+  #projectsModal .modal-actions { margin-top:14px; padding-top:12px; border-top:1px solid #1e293b; flex-shrink:0; }
 
 .chat-item span:first-child { flex: 1;  cursor: pointer;
 }
@@ -483,9 +486,63 @@ const ACTION_LABELS = {
 };
 
 function getHistoryText(message){
-  if (message.historyText) return message.historyText;
-  return (message.text || "").replace(/<[^>]+>/g, "");
-}
+    if (message.historyText) return message.historyText;
+    return (message.text || "").replace(/<[^>]+>/g, "");
+  }
+
+  function collectPreviousIdeaMemory(){
+    const ideas = [];
+    const seen = new Set();
+
+    const addIdea = idea => {
+      if(!idea || typeof idea !== "object") return;
+      const title = String(idea.title || idea.idea_title || "").trim();
+      if(!title) return;
+      const key = title.toLowerCase();
+      if(seen.has(key)) return;
+      seen.add(key);
+      ideas.push({
+        title,
+        business_model: String(idea.business_model || idea.businessModel || "").trim(),
+        description: String(idea.description || "").trim(),
+        who_is_this_for: String(idea.who_is_this_for || "").trim()
+      });
+    };
+
+    const readPayload = payload => {
+      if(Array.isArray(payload)){
+        payload.forEach(addIdea);
+        return;
+      }
+      if(!payload || typeof payload !== "object") return;
+      if(Array.isArray(payload.result)){
+        payload.result.forEach(addIdea);
+        return;
+      }
+      if(Array.isArray(payload.ideas)){
+        payload.ideas.forEach(addIdea);
+        return;
+      }
+      if(payload.result && typeof payload.result === "object"){
+        addIdea(payload.result);
+        return;
+      }
+      addIdea(payload);
+    };
+
+    messages.forEach(message => {
+      const raw = getHistoryText(message);
+      if(!raw) return;
+      try{
+        readPayload(JSON.parse(raw));
+      } catch(err){
+        // plain text history entries are expected
+      }
+    });
+
+    currentPlans.forEach(addIdea);
+    return ideas;
+  }
 
 function isPlanPrompt(text){
   return /(30\s*day|30\s*days|plan|roadmap|week by week|day by day)/i.test(text || "");
@@ -1645,7 +1702,7 @@ function renderActiveProjectPanel(){
   if(!activeProject){
     activeProjectMount.innerHTML = `
       <div class="active-project-card">
-        <div class="project-empty">No active project yet. Pick an idea card and click <b>Set Active Project</b> to turn it into a reusable workspace.</div>
+        <div class="project-empty">No active project yet. Pick an idea card and click <b>Set Active Project</b>. It is automatically saved into <b>My Projects</b> as your reusable workspace.</div>
       </div>
     `;
     return;
@@ -1845,6 +1902,7 @@ function setActiveProject(index){
   activeProjectCollapsed = false;
   renderActiveProjectPanel();
   saveActiveProjectToStore(activeProject);
+  addMessage(`✅ <b>${escapeHtml(idea.title || "Project")}</b> is now your Active Project and has been added to <b>My Projects</b>.`, "ai");
   trackEvent("active_project_set", { idea_title: idea.title });
 }
 
@@ -2697,16 +2755,17 @@ async function sendMessage(){
   headers: {
     "Content-Type": "application/json"
   },
-  body: JSON.stringify({
-    skills: extractSkill(text),
-    interests: text,
-    request_type: requestType,
-    plan_focus: requestType === "plan" ? getLatestTopic() : "",
-    time: "2 hours",
-    history: messages.map(m => ({
-      role: m.role,
-      text: getHistoryText(m)
-    })),
+    body: JSON.stringify({
+      skills: extractSkill(text),
+      interests: text,
+      request_type: requestType,
+      plan_focus: requestType === "plan" ? getLatestTopic() : "",
+      time: "2 hours",
+      previous_ideas: collectPreviousIdeaMemory(),
+      history: messages.map(m => ({
+        role: m.role,
+        text: getHistoryText(m)
+      })),
     timestamp: Date.now()
   })
 });
@@ -2870,11 +2929,16 @@ ${p.personal_reason || "Based on your interests and skills"}
 
   addMessage(html, "ai");
 
-  messages.push({
-    role: "ai",
-    text: html,
-    historyText: p.title
-  });
+    messages.push({
+      role: "ai",
+      text: html,
+      historyText: JSON.stringify({
+        title: p.title || "",
+        description: p.description || "",
+        business_model: p.business_model || "",
+        who_is_this_for: p.who_is_this_for || ""
+      })
+    });
 
 });
 
