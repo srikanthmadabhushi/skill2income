@@ -424,6 +424,24 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
+const API_BASE = "https://skill2income-api.onrender.com";
+
+async function securedFetch(url, options = {}){
+  if(!auth.currentUser){
+    throw new Error("Please sign in first.");
+  }
+
+  const token = await auth.currentUser.getIdToken();
+  const headers = {
+    ...(options.headers || {}),
+    Authorization: `Bearer ${token}`
+  };
+
+  return fetch(url, {
+    ...options,
+    headers
+  });
+}
 
 const chat = document.getElementById("chat");
 const sidebar = document.getElementById("sidebar");
@@ -2042,7 +2060,7 @@ async function runLaunchAgent(){
   trackEvent("launch_agent_run", { idea_title: activeProject.title });
 
   try{
-    let res = await fetch("https://skill2income-api.onrender.com/launch-agent", {
+    let res = await securedFetch(`${API_BASE}/launch-agent`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -2059,7 +2077,7 @@ async function runLaunchAgent(){
     });
 
     if(!res.ok){
-      res = await fetch("https://skill2income-api.onrender.com/generate-income-plan", {
+      res = await securedFetch(`${API_BASE}/generate-income-plan`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -2122,7 +2140,7 @@ async function runProjectStrategyAgent(){
   trackEvent("strategy_agent_run", { idea_title: activeProject.title });
 
   try{
-    const res = await fetch("https://skill2income-api.onrender.com/project-strategy-agent", {
+    const res = await securedFetch(`${API_BASE}/project-strategy-agent`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -2202,7 +2220,7 @@ async function submitRagAdvisor(){
   trackEvent("rag_advisor_started", { idea_title: activeProject.title, knowledge_notes: knowledgeItems.length });
 
   try{
-    const res = await fetch("https://skill2income-api.onrender.com/rag-advisor", {
+    const res = await securedFetch(`${API_BASE}/rag-advisor`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -2274,7 +2292,7 @@ async function runRecommendationEngine(){
   trackEvent("recommendation_engine_started", { idea_title: activeProject.title });
 
   try{
-    const res = await fetch("https://skill2income-api.onrender.com/recommendation-engine", {
+    const res = await securedFetch(`${API_BASE}/recommendation-engine`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -2341,7 +2359,7 @@ async function runProjectEvaluation(){
   trackEvent("project_evaluation_started", { idea_title: activeProject.title });
 
   try{
-    const res = await fetch("https://skill2income-api.onrender.com/project-evaluation", {
+    const res = await securedFetch(`${API_BASE}/project-evaluation`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -2408,7 +2426,7 @@ async function runValidationToolkit(){
   trackEvent("validation_toolkit_run", { idea_title: activeProject.title });
 
   try{
-    let res = await fetch("https://skill2income-api.onrender.com/validation-toolkit", {
+    let res = await securedFetch(`${API_BASE}/validation-toolkit`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -2425,7 +2443,7 @@ async function runValidationToolkit(){
     });
 
     if(!res.ok){
-      res = await fetch("https://skill2income-api.onrender.com/generate-income-plan", {
+      res = await securedFetch(`${API_BASE}/generate-income-plan`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -2499,7 +2517,7 @@ async function runFirstCustomerPack(){
   trackEvent("first_customer_pack_started", { idea_title: activeProject.title });
 
   try{
-    let res = await fetch("https://skill2income-api.onrender.com/first-customer-pack", {
+    let res = await securedFetch(`${API_BASE}/first-customer-pack`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -2516,7 +2534,7 @@ async function runFirstCustomerPack(){
     });
 
     if(!res.ok){
-      res = await fetch("https://skill2income-api.onrender.com/generate-income-plan", {
+      res = await securedFetch(`${API_BASE}/generate-income-plan`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -2588,7 +2606,7 @@ async function pushToServiceNow(){
   trackEvent("servicenow_export_started", { idea_title: activeProject.title });
 
   try{
-    const res = await fetch("https://skill2income-api.onrender.com/servicenow/export", {
+    const res = await securedFetch(`${API_BASE}/servicenow/export`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -2658,7 +2676,7 @@ async function submitIssueReport(){
   trackEvent("servicenow_issue_started", { title, severity, feature });
 
   try{
-    const res = await fetch("https://skill2income-api.onrender.com/servicenow/report-issue", {
+    const res = await securedFetch(`${API_BASE}/servicenow/report-issue`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -2734,7 +2752,7 @@ async function submitTicketStatusCheck(){
   trackEvent("servicenow_status_started", { ticket_number: ticketNumber });
 
   try{
-    const res = await fetch("https://skill2income-api.onrender.com/servicenow/ticket-status", {
+    const res = await securedFetch(`${API_BASE}/servicenow/ticket-status`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -2853,7 +2871,7 @@ async function sendMessage(){
   trackEvent("generate_ideas", { prompt: text });
 
   try{
-   const res = await fetch("https://skill2income-api.onrender.com/generate-income-plan", {
+   const res = await securedFetch(`${API_BASE}/generate-income-plan`, {
   method: "POST",
   headers: {
     "Content-Type": "application/json"
@@ -3162,7 +3180,7 @@ async function runIdeaComparison(){
   trackEvent("idea_comparison_started", { count: compareIdeas.length });
 
   try{
-    let res = await fetch("https://skill2income-api.onrender.com/idea-comparison", {
+    let res = await securedFetch(`${API_BASE}/idea-comparison`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -3177,7 +3195,7 @@ async function runIdeaComparison(){
     });
 
     if(!res.ok){
-      res = await fetch("https://skill2income-api.onrender.com/generate-income-plan", {
+      res = await securedFetch(`${API_BASE}/generate-income-plan`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -3578,7 +3596,7 @@ async function sendCoachMessage(text){
   const loadingId = addMessage(`⏳ AI Coach is thinking about <b>${escapeHtml(coachIdea.title)}</b>...`, "ai");
 
   try{
-    const res = await fetch("https://skill2income-api.onrender.com/ai-coach", {
+    const res = await securedFetch(`${API_BASE}/ai-coach`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -3651,7 +3669,7 @@ async function generateExecutionPlan(index){
   const loadingId = addMessage(`⏳ Building execution plan for <b>${escapeHtml(idea.title)}</b>...`, "ai");
 
   try{
-    const res = await fetch("https://skill2income-api.onrender.com/generate-income-plan", {
+    const res = await securedFetch(`${API_BASE}/generate-income-plan`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
